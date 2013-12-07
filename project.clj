@@ -1,6 +1,6 @@
-(defproject tailrecursion/boot "0.2.1"
+(defproject tailrecursion/boot.core "1.0.0"
   :description  "A dependency setup/build tool for Clojure."
-  :url          "https://github.com/tailrecursion/boot"
+  :url          "https://github.com/tailrecursion/boot.core"
   :license      {:name  "Eclipse Public License"
                  :url   "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure       "1.5.1"]
