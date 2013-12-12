@@ -8,11 +8,12 @@
 
 (ns tailrecursion.boot.core.task
   (:require
-    [clojure.java.io                :refer [resource]]
-    [clojure.pprint                 :refer [pprint print-table]]
-    [clojure.string                 :refer [split join blank?]]
-    [tailrecursion.boot.table.core  :refer [table]]
-    [tailrecursion.boot.core        :refer [deftask]]))
+   [me.raynes.conch.low-level      :as sh]
+   [clojure.java.io                :refer [copy delete-file file resource]]
+   [clojure.pprint                 :refer [pprint print-table]]
+   [clojure.string                 :refer [split join blank?]]
+   [tailrecursion.boot.table.core  :refer [table]]
+   [tailrecursion.boot.core        :refer [deftask mkdir!]]))
 
 (defn first-line [s] (when s (first (split s #"\n"))))
 (defn not-blank? [s] (when-not (blank? s) s))
@@ -79,3 +80,78 @@
                (printf "%s\n%s\n%s\n  %s\n\n" (version-str) sym args doc)
                (flush)))) 
          (continue event))))))
+
+(def ^:dynamic *sh-dir* nil)
+
+(defn sh [& args]
+  (let [opts (into [:redirect-err true] (when *sh-dir* [:dir *sh-dir*]))
+        proc (apply sh/proc (concat args opts))]
+    (future (sh/stream-to-out proc :out))
+    #(.waitFor (:process proc))))
+
+(defn pp-str [form]
+  (with-out-str (pprint form)))
+
+(deftask rebuild-boot
+  "Rebuild boot with AOT compiled tasks.
+  
+  This task builds a new boot executable by cloning the master branch of the
+  boot github repo and running `make boot` in that directory. If there is a
+  boot.edn file in the current directory then any tasks that are specified
+  there will be AOT compiled into the exe, which greatly reduces boot's startup
+  time. This task can be combined with other tasks if those tasks have different
+  dependencies to build optimized boot exe's for each use case.
+
+  Note that AOT compilation may not work with certain dependencies. The
+  ClojureScript compiler is a good example of this. These deps must be excluded
+  from the uberjar. Add an :uberjar-exclusions key to boot.edn with a vector of
+  regexes (matching paths to be excluded from the jar file).
+  
+  The new boot executable will be created either with the path specified by the
+  outfile argument or at ./boot if outfile isn't provided."
+  [boot & [outfile]]
+  (let [pdir (mkdir! boot ::optimize)
+        faot (file pdir "src" "tailrecursion" "boot" "forceaot.clj")
+        pclj (file pdir "project.clj")]
+    ((sh "git" "clone" "git@github.com:tailrecursion/boot" (.getPath pdir)))
+    (let [proj (->> pclj slurp read-string)
+          head (take 3 proj)
+          opts (->> proj (drop 3) (apply hash-map))
+          excl {:uberjar-exclusions (or (:uberjar-exclusions @boot) [])}
+          deps (into (:dependencies opts) (:dependencies @boot))
+          keys (merge excl (assoc opts :dependencies deps))
+          proj (concat head (mapcat identity keys))
+          task (map first (:require-tasks @boot))
+          aots (list 'ns 'tailrecursion.boot.forceaot
+                 (list* :require task)
+                 (list :gen-class))]
+      (spit pclj (pp-str proj))
+      (spit faot (pp-str aots))
+      ((binding [*sh-dir* pdir] (sh "make" "boot")))
+      (copy (file pdir "boot") (file (or outfile "boot"))))
+    identity))
+
+(deftask lein
+  "Run a leiningen task.
+
+  This task creates a temporary project.clj file based on the project's boot.edn
+  configuration, including project name and version (generated if not present in
+  boot.edn) and dependencies. Additional keys may be added to the project.clj
+  file by specifying a :lein key in boot.edn associated with a map of keys and
+  values.
+
+  Note that leiningen is run in another process. This task cannot be used to run
+  interactive lein tasks because stdin is not piped to the leiningen process."
+  [boot & args]
+  (let [pfile (file "project.clj")
+        pname (or (:project @boot) 'boot-project)
+        pvers (or (:version @boot) "0.1.0-SNAPSHOT")
+        head  (list 'defproject pname pvers
+                :dependencies (:dependencies @boot))]
+    (assert (not (.exists pfile)) "A projec.clj file already exists.")
+    (.deleteOnExit pfile)
+    (spit pfile (pp-str (concat head (mapcat identity (:lein @boot)))))
+    (fn [continue]
+      (fn [event]
+        ((apply sh "lein" (map str args)))
+        (continue event)))))
