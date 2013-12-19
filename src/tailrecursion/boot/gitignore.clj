@@ -13,7 +13,7 @@
     [clojure.java.io    :refer [file]]
     [clojure.string     :refer [blank? join split replace trim]])
   (:import
-    [java.nio.file FileSystems]))
+    [org.springframework.util AntPathMatcher]))
 
 (defprotocol IMatcher
   (-negated? [this] "Is this pattern negated?")
@@ -33,8 +33,8 @@
         (recur (if (not m?) match? (not n?)) more-matchers)))))
 
 (defn path-matcher [pattern & [negated?]]
-  (let [m (.. FileSystems (getDefault) (getPathMatcher (str "glob:" pattern)))]
-    (Matcher. negated? (fn [f] (.matches m (.toPath (.getCanonicalFile f)))))))
+  (let [m (AntPathMatcher.)]
+    (Matcher. negated? (fn [f] (.match m pattern (.toString (.getCanonicalFile f)))))))
 
 (defn parse-gitignore1 [pattern base]
   (let [base    (if (.endsWith base "/") base (str base "/"))
