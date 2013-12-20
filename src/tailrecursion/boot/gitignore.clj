@@ -48,9 +48,9 @@
         matcher #(path-matcher (apply str base %&))]
     (when (negated?) (swap! pat replace #"^!" ""))
     (when (end-slash?) (swap! pat replace #"/*$" ""))
-    (if-not (has-slash?) 
-      (swap! mat into (map matcher [@pat (str "**/" @pat)]))
-      (swap! mat conj (matcher (strip @pat))))
+    (if (lead-slash?)
+      (swap! mat conj (matcher (strip @pat)))
+      (swap! mat into (map matcher [@pat (str "**/" @pat)])))
     (when (lead-asts?)
       (swap! mat conj (matcher (strip (subs @pat 3)))))
     (when (end-ast?)
