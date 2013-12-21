@@ -147,7 +147,8 @@
         pname (or (:project @boot) 'boot-project)
         pvers (or (:version @boot) "0.1.0-SNAPSHOT")
         head  (list 'defproject pname pvers
-                :dependencies (:dependencies @boot))]
+                :dependencies (:dependencies @boot)
+                :source-paths (vec (:src-paths @boot)))]
     (assert (not (.exists pfile)) "A projec.clj file already exists.")
     (.deleteOnExit pfile)
     (spit pfile (pp-str (concat head (mapcat identity (:lein @boot)))))

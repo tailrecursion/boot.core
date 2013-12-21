@@ -23,8 +23,9 @@
      :dependencies  []
      :src-paths     #{}
      :src-static    #{}
-     :repositories  #{"http://repo1.maven.org/maven2/" "http://clojars.org/repo/"}
-     :require-tasks '#{[tailrecursion.boot.core.task :refer [help]]}
+     :repositories  #{"http://clojars.org/repo/"
+                      "http://repo1.maven.org/maven2/"}
+     :require-tasks '#{[tailrecursion.boot.core.task :refer :all]}
      :test          "test"
      :target        "target"
      :resources     "resources"
