@@ -1,0 +1,7 @@
+.boot/tmp
+/boot
+tmpdir/
+ignore.txt
+*.bak
+src/**/what.what
+!src/negated/what.what
