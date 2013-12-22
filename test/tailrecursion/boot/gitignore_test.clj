@@ -1,10 +1,11 @@
 (ns tailrecursion.boot.gitignore-test
   (:require 
     [clojure.test :refer :all]
-    [clojure.java.io :refer [file]]
+    [clojure.java.io :refer [copy file]]
     [tailrecursion.boot.gitignore :as gi]))
 
 (def fix-dir "test/fixtures/")
+(->> (doto (file fix-dir ".gitignore") (.deleteOnExit)) (copy (file fix-dir "gitignore")))
 (def matches? (gi/make-gitignore-matcher fix-dir))
 (defn fixf [path]
   (file (str fix-dir path)))
