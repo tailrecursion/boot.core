@@ -6,7 +6,8 @@
   :dependencies [[org.springframework/spring-core "1.2.2"]
                  [me.raynes/conch                 "0.5.0" :exclusions [org.clojure/clojure]]
                  [com.cemerick/pomegranate        "0.2.0" :exclusions [org.clojure/clojure]]
-                 [digest                          "1.4.3" :exclusions [org.clojure/clojure]]]
+                 [digest                          "1.4.3" :exclusions [org.clojure/clojure]]
+                 [ancient-clj                     "0.1.6" :exclusions [org.clojure/clojure]]]
   :aot          :all
   :main         tailrecursion.boot
   :profiles     {:dev {:dependencies [[org.clojure/clojure "1.5.1"]]}})

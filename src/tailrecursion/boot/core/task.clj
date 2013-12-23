@@ -10,10 +10,11 @@
   (:require
    [me.raynes.conch.low-level      :as sh]
    [clojure.java.io                :refer [copy delete-file file resource]]
-   [clojure.pprint                 :refer [pprint print-table]]
+   [clojure.pprint                 :refer [pprint print-table with-pprint-dispatch code-dispatch]]
    [clojure.string                 :refer [split join blank?]]
    [tailrecursion.boot.table.core  :refer [table]]
-   [tailrecursion.boot.core        :refer [deftask mkdir!]]))
+   [tailrecursion.boot.core        :refer [deftask mkdir!]]
+   [ancient-clj.core               :as    ancient]))
 
 (defn first-line [s] (when s (first (split s #"\n"))))
 (defn not-blank? [s] (when-not (blank? s) s))
@@ -46,6 +47,17 @@
 (defn version-str []
   (let [{:keys [proj vers desc url lic]} (version-info)]
     (str (format "%s %s: %s\n" (name proj) vers url))))
+
+(def base-artifacts '[tailrecursion/boot.core
+                      tailrecursion/boot.task
+                      tailrecursion/hoplon
+                      org.clojure/clojurescript])
+
+(defn latest-artifact-versions []
+  (mapv #(vector % (ancient/latest-version-string! %)) base-artifacts))
+
+(defn pprint-code [code]
+  (with-pprint-dispatch code-dispatch (pprint code)))
 
 ;; CORE TASKS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -156,3 +168,21 @@
       (fn [event]
         ((apply sh "lein" (map str args)))
         (continue event)))))
+
+(deftask init
+  "Creates a simple boot.edn at the directory specified. Without
+  arguments, creates a boot.edn file in the current working
+  directory."
+  ([] (init "."))
+  ([target-dir]
+     (let [target-dir (file target-dir)
+           boot-file (file (str target-dir "/boot.edn"))]
+       (if (and (.isDirectory target-dir) (not (.exists boot-file)))
+         (spit boot-file
+           (with-out-str
+             (str (pprint-code {:dependencies (latest-artifact-versions)
+                                :require-tasks '#{[tailrecursion.boot.task :refer :all]
+                                                  [tailrecursion.hoplon.boot :refer :all]}
+                                :public "resources/public"
+                                :src-paths #{"src"}}))))
+         (println "The boot file" (str boot-file) "already exists or the path you specified is not a directory.")))))
