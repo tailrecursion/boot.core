@@ -14,7 +14,7 @@
    [clojure.string                 :refer [split join blank?]]
    [tailrecursion.boot.table.core  :refer [table]]
    [tailrecursion.boot.core        :refer [deftask mkdir!]]
-   [ancient-clj.core               :as    ancient]))
+   [ancient-clj.core               :refer [latest-version-string!]]))
 
 (defn first-line [s] (when s (first (split s #"\n"))))
 (defn not-blank? [s] (when-not (blank? s) s))
@@ -54,10 +54,42 @@
                       org.clojure/clojurescript])
 
 (defn latest-artifact-versions []
-  (mapv #(vector % (ancient/latest-version-string! %)) base-artifacts))
+  (mapv #(vector % (latest-version-string! %)) base-artifacts))
 
 (defn pprint-code [code]
   (with-pprint-dispatch code-dispatch (pprint code)))
+
+(def boot-init-content
+  (-> {:dependencies (latest-artifact-versions)
+       :require-tasks '#{[tailrecursion.boot.task :refer :all]
+                         [tailrecursion.hoplon.boot :refer :all]}
+       :public "resources/public"
+       :src-paths #{"src"}}
+      pprint-code
+      with-out-str))
+
+(defn dir? [f] (.isDirectory f))
+
+(defn file-exists? [f] (.exists f))
+
+(defn mkdir-p [& paths]
+  (.mkdirs (apply file paths)))
+
+(def hello-world-content
+  (str
+   "(page \"index.html\")\n\n"
+   "(html\n  (head)\n  (body\n    (h1 \"Hello, world!\")))"))
+
+(defn make-hello-world [& path-pieces]
+  (spit (apply file path-pieces) hello-world-content))
+
+(defn build-init-structure [target-dir]
+  (let [base-path (.getCanonicalPath target-dir)]
+    (mkdir-p base-path "src")
+    (mkdir-p base-path "resources/public")
+    (mkdir-p base-path "resources/assets/css")
+    (make-hello-world base-path "src" "index.cljs.hl")))
+
 
 ;; CORE TASKS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -175,14 +207,10 @@
   directory."
   ([] (init "."))
   ([target-dir]
-     (let [target-dir (file target-dir)
-           boot-file (file (str target-dir "/boot.edn"))]
-       (if (and (.isDirectory target-dir) (not (.exists boot-file)))
-         (spit boot-file
-           (with-out-str
-             (str (pprint-code {:dependencies (latest-artifact-versions)
-                                :require-tasks '#{[tailrecursion.boot.task :refer :all]
-                                                  [tailrecursion.hoplon.boot :refer :all]}
-                                :public "resources/public"
-                                :src-paths #{"src"}}))))
+     (let [target-dir (file (.getCanonicalPath target-dir))
+           boot-file (file target-dir "boot.edn")]
+       (if (and (dir? target-dir)
+                ((complement file-exists?) boot-file))
+         (do (spit boot-file boot-init-content)
+             (build-init-structure target-dir))
          (println "The boot file" (str boot-file) "already exists or the path you specified is not a directory.")))))
