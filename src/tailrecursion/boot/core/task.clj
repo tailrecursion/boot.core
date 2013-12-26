@@ -149,7 +149,7 @@
         head  (list 'defproject pname pvers
                 :dependencies (:dependencies @boot)
                 :source-paths (vec (:src-paths @boot)))]
-    (assert (not (.exists pfile)) "A projec.clj file already exists.")
+    (assert (not (.exists pfile)) "A project.clj file already exists.")
     (.deleteOnExit pfile)
     (spit pfile (pp-str (concat head (mapcat identity (:lein @boot)))))
     (fn [continue]
