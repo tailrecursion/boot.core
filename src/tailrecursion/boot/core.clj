@@ -141,13 +141,21 @@
           (keyword? main) (-> @boot (get-in [:tasks main :main]) first get-mw-fn)
           :else           (-> main eval get-mw-fn))))
 
+(defmulti eval-mw (fn [boot [task & args]] task) :default ::default)
+
+(defmethod eval-mw :do [boot [_ task & tasks]]
+  (swap! boot update-in [:system :argv] #(into (vec %) tasks))
+  (eval-mw boot task))
+
+(defmethod eval-mw ::default [boot [task & args]]
+  (let [doit (get-mw-fn boot task)]
+    (assert doit (str "no such task: " task))
+    (apply doit boot args)))
+
 (defn get-current-middleware! [boot]
-  (locking boot
-    (when-let [[task & args] (:main @boot)]
-      (swap! boot dissoc :main)
-      (let [doit (get-mw-fn boot task)]
-        (assert doit (str "no such task: " task))
-        (apply doit boot args)))))
+  (when-let [main (:main @boot)]
+    (swap! boot dissoc :main)
+    (eval-mw boot main)))
 
 (defn get-next-middleware! [boot]
   (locking boot

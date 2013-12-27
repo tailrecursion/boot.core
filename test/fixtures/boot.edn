@@ -1,9 +1,14 @@
 {:project       tailrecursion/boot
  :version       "0.1.0-SNAPSHOT"
- :dependencies  [[tailrecursion/boot.task "0.1.0-SNAPSHOT"]]
+ :dependencies  [[tailrecursion/boot.core "1.1.1"]
+                 [tailrecursion/boot.task "1.0.1"]
+                 ;[org.clojure/clojurescript "0.0-1934"]
+                 ]
  :require-tasks #{[tailrecursion.boot.task :as t]} 
  :src-paths     #{"test"}
  :tasks
- {:test
+ {:doit
+  {:main [:do [:t/debug] [:t/debug]]}
+  :test
   {:dependencies  [[alandipert/enduro "1.1.2"]]
    :main          [tailrecursion.boot-test/main]}}}
