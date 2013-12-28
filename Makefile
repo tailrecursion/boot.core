@@ -1,33 +1,15 @@
+.PHONY: help docs deploy
 
 help:
-	@echo
-	@echo 'Usage: make {boot|boot-faster}'
-	@echo
-	@echo 'Targets:'
-	@echo '  boot         Create executable boot jar file.'
-	@echo '  boot-faster  Create executable boot jar file with class data sharing.'
-	@echo
+	@echo "USAGE: make [help|docs|deploy]"
 
-clean:
-	rm -f boot
-	lein clean
+docs: docs/index.html
 
-build: clean
-	lein uberjar
+deploy: .deploy.time
 
-boot: build
-	echo '#!/usr/bin/env bash' > boot
-	echo 'java $$JVM_OPTS -jar $$0 "$$@"' >> boot
-	echo 'exit' >> boot
-	cat target/boot*-standalone.jar >> boot
-	chmod 0755 boot
-	@echo "*** Done. Copy ./boot to a directory in your PATH. ***"
+docs/index.html: $(shell find src -type f)
+	lein marg -f index.html
 
-boot-faster: build
-	echo '#!/usr/bin/env bash' > boot
-	echo 'java -Xshare:on -Xbootclasspath/a:$$0 tailrecursion.boot "$$@"' >> boot
-	echo 'exit' >> boot
-	cat target/boot*-standalone.jar >> boot
-	chmod 0755 boot
-	sudo java -Xshare:dump -Xbootclasspath/a:boot
-	@echo "*** Done. Copy ./boot to a directory in your PATH. ***"
+.deploy.time: docs/index.html
+	ghp-import -p docs
+	date > .deploy.time
