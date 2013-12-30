@@ -13,7 +13,7 @@
    [clojure.pprint                 :refer [pprint print-table]]
    [clojure.string                 :refer [split join blank?]]
    [tailrecursion.boot.table.core  :refer [table]]
-   [tailrecursion.boot.core        :refer [deftask mkdir! root-tasks]]))
+   [tailrecursion.boot.core        :refer [deftask mkdir! root-tasks]]))))
 
 (defn first-line [s] (when s (first (split s #"\n"))))
 (defn not-blank? [s] (when-not (blank? s) s))
@@ -29,16 +29,8 @@
         pads (concat [thing] (repeat pad))]
     (join "\n" (map (comp (partial apply str) vector) pads lines))))
 
-(defn version-info []
-  (let [[_ proj vers & kvs]
-        (try (read-string (slurp (resource "project.clj")))
-          (catch Throwable _))
-        {desc :description url :url lic :license}
-        (into {} (map (partial apply vector) (partition 2 kvs)))]
-    {:proj proj, :vers vers, :desc desc, :url url, :lic lic}))
-
 (defn version-str []
-  (let [{:keys [proj vers desc url lic]} (version-info)]
+  (let [{:keys [proj vers description url license]} (version/info)]
     (str (format "%s %s: %s\n" (name proj) vers url))))
 
 ;; CORE TASKS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
