@@ -29,16 +29,8 @@
         pads (concat [thing] (repeat pad))]
     (join "\n" (map (comp (partial apply str) vector) pads lines))))
 
-(defn version-info []
-  (let [[_ proj vers & kvs]
-        (try (read-string (slurp (resource "project.clj")))
-          (catch Throwable _))
-        {desc :description url :url lic :license}
-        (into {} (map (partial apply vector) (partition 2 kvs)))]
-    {:proj proj, :vers vers, :desc desc, :url url, :lic lic}))
-
-(defn version-str []
-  (let [{:keys [proj vers desc url lic]} (version-info)]
+(defn version-str [boot]
+  (let [{:keys [proj vers description url license]} (:boot-version @boot)]
     (str (format "%s %s: %s\n" (name proj) vers url))))
 
 ;; CORE TASKS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -52,12 +44,12 @@
   "Print this help info.
   
   Some things more..."
-  ([boot] 
+  ([boot]
      (let [core? #(= "tailrecursion.boot.core" (namespace %))
            tasks (sort (remove core? (keys @root-tasks)))]
        (fn [continue]
          (fn [event]
-           (printf "%s\n" (version-str))
+           (printf "%s\n" (version-str boot))
            (-> ["boot task ..." "boot [task arg arg] ..." "boot [help task]"]
              (->> (pad-left "Usage: ") println))
            (printf "\n%s\n\n" (pad-left "Tasks: " (split (print-tasks tasks) #"\n")))
@@ -69,7 +61,7 @@
        (let [{args :arglists doc :doc} (:meta task*)]
          (fn [continue]
            (fn [event]
-             (printf "%s\n%s\n%s\n  %s\n\n" (version-str) task args doc)
+             (printf "%s\n%s\n%s\n  %s\n\n" (version-str boot) task args doc)
              (flush) 
              (continue event)))))))
 
