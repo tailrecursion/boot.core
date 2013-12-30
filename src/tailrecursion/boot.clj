@@ -1,11 +1,12 @@
-;; Copyright (c) Alan Dipert and Micha Niskin. All rights reserved.
-;; The use and distribution terms for this software are covered by the
-;; Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
-;; which can be found in the file epl-v10.html at the root of this distribution.
-;; By using this software in any fashion, you are agreeing to be bound by
-;; the terms of this license.
-;; You must not remove this notice, or any other, from this software.
+; Copyright (c) Alan Dipert and Micha Niskin. All rights reserved.
+; The use and distribution terms for this software are covered by the
+; Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+; which can be found in the file epl-v10.html at the root of this distribution.
+; By using this software in any fashion, you are agreeing to be bound by
+; the terms of this license.
+; You must not remove this notice, or any other, from this software.
 
+;;
 (ns tailrecursion.boot
   (:require [clojure.string                 :as string]
             [clojure.java.io                :as io]
@@ -17,6 +18,8 @@
   (:gen-class))
 
 (def base-env
+  "Returns a basic boot environment map. The `boot.edn` and `~/.boot.edn`
+  configuration is merged into this and stored in a boot atom."
   (fn []
     {:project       nil
      :version       nil
@@ -25,7 +28,7 @@
      :src-static    #{}
      :repositories  #{"http://clojars.org/repo/"
                       "http://repo1.maven.org/maven2/"}
-     :require-tasks '#{[tailrecursion.boot.core.task :refer :all]}
+     :require-tasks '#{}
      :test          "test"
      :target        "target"
      :resources     "resources"
@@ -57,29 +60,16 @@
   (let [s (try (read-string (str "(" (string/join " " args) ")"))
             (catch Throwable e
               (throw (Exception. "Can't read command line forms" e))))]
-    (map #(if (vector? %) % [%]) s)))
-
-(defn merge-in-with [f ks & maps]
-  (->> maps (map #(assoc-in {} ks (get-in % ks))) (apply merge-with f)))
+    (->> s
+      (map #(if (vector? %) % [%]))
+      (map (fn [[op & args]] `[~(if (keyword? op) op (keyword op)) ~@args])))))
 
 (defn -main [& args]
-  (let [base  (base-env)
-        sys   (:system base)
-        argv  (or (seq (read-cli-args args)) (list ["help"]))
-        usr   (when-let [f (exists? (:userfile sys))] (read-config f))
-        cfg   (read-config (:bootfile sys))
-        deps  (merge-in-with into [:dependencies] base usr cfg)
-        dirs  (merge-in-with into [:src-paths] base usr cfg)
-        reqs  (merge-in-with into [:require-tasks] base usr cfg)
-        repo  (merge-with #(->> %& (filter seq) first)
-                (merge-in-with into [:repositories] {:repositories #{}} usr cfg)
-                (select-keys base [:repositories]))
-        tasks (merge-in-with into [:tasks] base usr cfg)
-        sys   (merge-with into sys {:argv argv})
-        boot  (core/init! base)]
-    (locking boot
-      (swap! boot merge usr cfg deps dirs reqs repo tasks {:system sys})
-      (swap! boot core/require-tasks))
-    (let [app (core/create-app! boot)]
-      (app (core/make-event boot)))
+  (let [boot  (core/init! (base-env))
+        {:keys [userfile bootfile]} (:system @boot)
+        argv  (or (seq (read-cli-args args)) (list [:help]))
+        usr   (if-let [f (exists? userfile)] (read-config f) {})
+        cfg   (merge (read-config bootfile) {:main (into [:do] argv)})
+        reqt  {:require-tasks '#{[tailrecursion.boot.core.task :refer :all]}}]
+    ((core/create-app! boot reqt usr cfg) (core/make-event boot))
     (System/exit 0)))
