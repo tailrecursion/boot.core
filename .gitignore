@@ -10,8 +10,10 @@ pom.xml.asc
 .lein-failures
 .lein-plugins
 .lein-repl-history
+.nrepl-port
 *.swn
 *.swo
 *.swp
 .boot/tmp
 /boot
+/docs

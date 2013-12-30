@@ -1,12 +1,13 @@
-;; Copyright (c) Alan Dipert and Micha Niskin. All rights reserved.
-;; The use and distribution terms for this software are covered by the
-;; Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
-;; which can be found in the file epl-v10.html at the root of this distribution.
-;; By using this software in any fashion, you are agreeing to be bound by
-;; the terms of this license.
-;; You must not remove this notice, or any other, from this software.
+; Copyright (c) Alan Dipert and Micha Niskin. All rights reserved.
+; The use and distribution terms for this software are covered by the
+; Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+; which can be found in the file epl-v10.html at the root of this distribution.
+; By using this software in any fashion, you are agreeing to be bound by
+; the terms of this license.
+; You must not remove this notice, or any other, from this software.
 
 (ns tailrecursion.boot.core
+  (:refer-clojure :exclude [eval compile])
   (:require [cemerick.pomegranate           :as pom]
             [clojure.java.io                :as io]
             [clojure.set                    :refer [difference]]
@@ -16,14 +17,51 @@
             [tailrecursion.boot.tmpregistry :as tmp])
   (:import [java.net URLClassLoader URL]))
 
+(declare analyze-task eval root-tasks prep-tasks lookup-env)
+
 ;; INTERNAL ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defmacro guard [expr & [default]]
   `(try ~expr (catch Throwable _# ~default)))
 
+(def user-ns (create-ns (symbol "tailrecursion.boot.user")))
+(defn user-eval [expr] (binding [*ns* user-ns] (clojure.core/eval expr)))
+(user-eval '(clojure.core/refer 'clojure.core))
+
 (defn load-sym [sym]
   (when-let [ns (and sym (namespace sym))] (require (symbol ns)))
   (or (resolve sym) (assert false (format "Can't resolve #'%s." sym))))
+
+(defn require-task [tasks [ns & {:keys [refer as]}]]
+  {:pre [(symbol? ns)
+         (or as refer)
+         (or (nil? as) (symbol? as))
+         (or (nil? refer) (= :all refer) (vector? refer))]}
+  (require ns)
+  (let [t?  #(-> % second meta :tailrecursion.boot.core/task)
+        pub (->> ns ns-publics (filter t?) (into {}))
+        mk  (fn [x] {:meta (meta x) :thunk (var-get x)})
+        r   (when refer
+              (->> pub
+                (filter #(or (= :all refer) (contains? (set refer) (first %))))
+                (map (fn [[k v]] [(keyword k) (mk v)])))) 
+        a   (when as
+              (->> pub
+                (map (fn [[k v]] [(keyword (str as) (str k)) (mk v)]))))] 
+    (merge (reduce into {} [r a]) tasks)))
+
+(defn require-tasks! [clauses]
+  (swap! root-tasks (partial reduce require-task) clauses))
+
+(defn task-meta [props]
+  (let [[op & args] (:main props)
+        dfl-meta '{:arglists ([boot & args])
+                   :doc "No documentation for this task."}]
+    (merge-with #(or %2 %1)
+      dfl-meta
+      (if-not (and (symbol? op) (namespace op))
+        {:doc (:doc props) :arglists (:arglists props)}
+        (do (require (symbol (namespace op))) (meta (resolve op)))))))
 
 (defn index-of [v val]
   (ffirst (filter (comp #{val} second) (map vector (range) v))))
@@ -58,41 +96,62 @@
       (doseq [url urls] (.invoke meth cldr (object-array [url]))))))
 
 (defn configure! [old new]
-  (let [[nd od] [(:dependencies new) (:dependencies old)] 
-        [ns os] [(:src-paths new) (:src-paths old)]]
+  (let [[nd od] [(:dependencies  new) (:dependencies  old)] 
+        [ns os] [(:src-paths     new) (:src-paths     old)]
+        [nr or] [(:require-tasks new) (:require-tasks old)]]
     (when-not (= nd od) (add-dependencies! nd (:repositories new)))
-    (when-not (= ns os) (add-directories! (difference ns os)))))
-
-(defn require-task [tasks [ns & {:keys [refer as]}]]
-  {:pre [(symbol? ns)
-         (or as refer)
-         (or (nil? as) (symbol? as))
-         (or (nil? refer) (= :all refer) (vector? refer))]}
-  (require ns)
-  (let [pub (-> (->> (ns-publics ns) (map (fn [[k v]] [k (meta v)]))) 
-                (->> (filter (comp ::task second)) (map first))) 
-        mk  (fn [sym] {:main [(symbol (str ns) (str sym))]})
-        r   (when refer
-              (->> pub
-                (filter #(or (= :all refer) (contains? (set refer) %)))
-                (map #((juxt keyword mk) %)))) 
-        a   (when as
-              (map #((juxt (comp (partial keyword (str as)) str) mk) %) pub))] 
-    (merge (reduce into {} [r a]) tasks)))
-
-(defn require-tasks [env]
-  (assoc env :tasks (reduce require-task (:tasks env) (:require-tasks env))))
-
-(defn prep-task [env task args]
-  (let [m     (or (:main task) '[tailrecursion.boot.core.task/nop]) 
-        main  {:main (if (seq args) (into [(first m)] args) m)}
-        sel   #(select-keys % [:src-paths :dependencies :repositories])
-        sel2  #(select-keys % [:require-tasks])
-        mvn   (merge-with into (sel env) (sel task))
-        req   (merge-with into (sel2 env) (sel2 task))]
-    (merge env task main mvn req)))
+    (when-not (= ns os) (add-directories! (difference ns os)))
+    (when-not (= nr or) (require-tasks! (difference nr or)))))
 
 (defmacro dotmp [this & body] `(-> ~this (get-in [:system :tmpregistry]) ~@body))
+
+;; BOOT EVALUATOR ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(def root-tasks (atom {}))
+(def prep-tasks (atom []))
+
+(defmulti  analyze (fn [k v] k) :default ::default)
+(defmethod analyze :require-tasks [k v] #(swap! % update-in [k] into v))
+(defmethod analyze :repositories  [k v] #(swap! % update-in [k] into v))
+(defmethod analyze :dependencies  [k v] #(swap! % update-in [k] into v))
+(defmethod analyze :src-static    [k v] #(swap! % update-in [k] into v))
+(defmethod analyze :src-paths     [k v] #(swap! % update-in [k] into v))
+(defmethod analyze :require       [k v] (fn [_] (doseq [ns v] `(require '~ns))))
+(defmethod analyze :tasks         [k v] (fn [_] (doseq [[t p] v] (analyze-task t p))))
+(defmethod analyze ::default      [k v] #(swap! % assoc k v))
+
+(defn analyze-task [task props]
+  (let [preps [:src-paths :repositories :dependencies :require-tasks]]
+    (->>
+      (fn [env & args]
+        (doseq [k preps] (when (contains? props k) ((analyze k (get props k)) env)))
+        (doseq [[k v] (apply dissoc props :main :doc :arglists preps)] ((analyze k v) env))
+        (if-let [main (:main props)] (eval env main args) (eval env [:do] nil)))
+      (hash-map :meta (task-meta props) :thunk)
+      (swap! root-tasks assoc task))))
+
+(defmulti  lookup identity :default ::default)
+(defmethod lookup :do       [op] (fn [env & args] (doseq [x args] (eval env x nil))))
+(defmethod lookup ::default [op] (lookup-env op))
+
+(defn lookup-env [op]
+  (cond
+    (symbol?  op) (load-sym op)
+    (seq?     op) (user-eval op)
+    (keyword? op) (:thunk (get @root-tasks op))))
+
+(defn eval [env [op & args1] args2]
+  (let [opfn (lookup op)
+        args (if (seq args2) args2 args1)]
+    (assert opfn (str "no such task (" op ")"))
+    (swap! prep-tasks conj (apply opfn env args))))
+
+(defn compile [boot & props]
+  (let [mkkw #(keyword (gensym "tailrecursion.boot.core/task-"))]
+    (loop [[p & q] props, expr [:do [(mkkw)]]]
+      (analyze-task (first (last expr)) p)
+      (if (seq q) (recur q (conj expr [(mkkw)])) (eval boot expr nil)))
+    (apply comp (filter fn? @prep-tasks))))
 
 ;; BOOT API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -103,6 +162,7 @@
 (defn unmk!     [this key]          (dotmp @this (tmp/unmk! key)) this)
 (defn add-sync! [this dst & [srcs]] (dotmp @this (tmp/add-sync! dst srcs)) this)
 (defn sync!     [this]              (dotmp @this (tmp/sync!)) this)
+(defn deps      [this]              (d/deps this))
 
 (defmacro deftask [name & args]
   `(defn ~(with-meta name {::task true}) ~@args))
@@ -122,50 +182,9 @@
 (defn init! [env]
   (doto (atom env) (add-watch ::_ #(configure! %3 %4))))
 
-(defn prep-next-task! [boot]
-  (locking boot
-    (when-let [[tfd & args] (first (get-in @boot [:system :argv]))]
-      (swap! boot
-        (fn [env] 
-          (when-let [[tfn & args] (first (get-in env [:system :argv]))]
-            (if-let [task (get-in env [:tasks (keyword tfn)])]
-              (prep-task (update-in env [:system :argv] rest) task args)
-              (assert false (format "No such task: '%s'" tfn)))))) 
-      (swap! boot require-tasks))))
-
-(defn get-mw-fn [boot main]
-  (let [get-mw-fn (partial get-mw-fn boot)]
-    (cond (fn? main)      main
-          (nil? main)     main
-          (symbol? main)  (load-sym main)
-          (keyword? main) (-> @boot (get-in [:tasks main :main]) first get-mw-fn)
-          :else           (-> main eval get-mw-fn))))
-
-(defmulti eval-mw (fn [boot [task & args]] task) :default ::default)
-
-(defmethod eval-mw :do [boot [_ task & tasks]]
-  (swap! boot update-in [:system :argv] #(into (vec %) tasks))
-  (eval-mw boot task))
-
-(defmethod eval-mw ::default [boot [task & args]]
-  (let [doit (get-mw-fn boot task)]
-    (assert doit (str "no such task: " task))
-    (apply doit boot args)))
-
-(defn get-current-middleware! [boot]
-  (when-let [main (:main @boot)]
-    (swap! boot dissoc :main)
-    (eval-mw boot main)))
-
-(defn get-next-middleware! [boot]
-  (locking boot
-    (when (prep-next-task! boot) (get-current-middleware! boot))))
-
-(defn create-app! [boot]
-  (let [tmp   (get-in @boot [:system :tmpregistry])
-        run!  #(get-next-middleware! boot)
-        tasks (loop [task (run!), tasks []]
-                (if task (recur (run!) (conj tasks task)) tasks))]
+(defn create-app! [boot & props]
+  (let [app (apply compile boot props)
+        tmp (get-in @boot [:system :tmpregistry])]
     (when (and (:public @boot) (seq (:src-static @boot)))
       (add-sync! boot (:public @boot) (map io/file (:src-static @boot))))
-    ((apply comp tasks) #(do (tmp/sync! tmp) (flush) %))))
+    (app #(do (tmp/sync! tmp) (flush) %))))

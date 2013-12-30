@@ -13,21 +13,15 @@
    [clojure.pprint                 :refer [pprint print-table]]
    [clojure.string                 :refer [split join blank?]]
    [tailrecursion.boot.table.core  :refer [table]]
-   [tailrecursion.boot.core        :refer [deftask mkdir!]]))
+   [tailrecursion.boot.core        :refer [deftask mkdir! root-tasks]]))
 
 (defn first-line [s] (when s (first (split s #"\n"))))
 (defn not-blank? [s] (when-not (blank? s) s))
 
-(defn get-doc [sym]
-  (when (symbol? sym)
-    (when-let [ns (namespace sym)] (require (symbol ns))) 
-    (join "\n" (-> sym find-var meta :doc str (split #" *\n *")))))
-
 (defn print-tasks [tasks]
   (let [get-task  #(-> % str (subs 1))
-        get-desc  #(or (-> % :doc first-line not-blank?)
-                       (-> % :main first get-doc first-line))
-        get-row   (fn [[k v]] [(get-task k) (get-desc v)])]
+        get-desc  #(->> % (get @root-tasks) :meta :doc first-line)
+        get-row   (fn [x] [(get-task x) (get-desc x)])]
     (with-out-str (table (into [["" ""]] (map get-row tasks)) :style :none))))
 
 (defn pad-left [thing lines]
@@ -59,27 +53,25 @@
   
   Some things more..."
   ([boot] 
-   (let [tasks (:tasks @boot)]
-     (fn [continue]
-       (fn [event]
-         (printf "%s\n" (version-str))
-         (-> ["boot task ..." "boot [task arg arg] ..." "boot [help task]"]
-           (->> (pad-left "Usage: ") println))
-         (printf "\n%s\n\n" (pad-left "Tasks: " (split (print-tasks tasks) #"\n")))
-         (flush)
-         (continue event)))))
+     (let [core? #(= "tailrecursion.boot.core" (namespace %))
+           tasks (sort (remove core? (keys @root-tasks)))]
+       (fn [continue]
+         (fn [event]
+           (printf "%s\n" (version-str))
+           (-> ["boot task ..." "boot [task arg arg] ..." "boot [help task]"]
+             (->> (pad-left "Usage: ") println))
+           (printf "\n%s\n\n" (pad-left "Tasks: " (split (print-tasks tasks) #"\n")))
+           (flush)
+           (continue event)))))
   ([boot task]
-   (let [main (get-in @boot [:tasks (keyword task) :main])]
-     (fn [continue]
-       (fn [event]
-         (assert (and (seq main) (symbol? (first main)))) 
-         (let [sym (first main)]
-           (when [(symbol? sym)]
-             (when-let [ns (namespace sym)] (require (symbol ns))) 
-             (let [{args :arglists doc :doc} (meta (find-var sym))]
-               (printf "%s\n%s\n%s\n  %s\n\n" (version-str) sym args doc)
-               (flush)))) 
-         (continue event))))))
+     (let [task* (get @root-tasks (keyword task))]
+       (assert task* (str "no such task (" task ")"))
+       (let [{args :arglists doc :doc} (:meta task*)]
+         (fn [continue]
+           (fn [event]
+             (printf "%s\n%s\n%s\n  %s\n\n" (version-str) task args doc)
+             (flush) 
+             (continue event)))))))
 
 (def ^:dynamic *sh-dir* nil)
 
