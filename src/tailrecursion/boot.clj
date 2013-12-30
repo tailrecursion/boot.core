@@ -8,14 +8,13 @@
 
 ;;
 (ns tailrecursion.boot
-  (:require [clojure.string                 :as string]
-            [clojure.java.io                :as io]
-            [clojure.pprint                 :refer [pprint]]
-            [tailrecursion.boot.core        :as core]
-            [tailrecursion.boot.tmpregistry :as tmp]
-            [tailrecursion.boot.gitignore   :as git])
-  (:import java.lang.management.ManagementFactory)
-  (:gen-class))
+  (:require [clojure.string                    :as string]
+            [clojure.java.io                   :as io]
+            [clojure.pprint                    :refer [pprint]]
+            [tailrecursion.boot.core           :as core]
+            [tailrecursion.boot.tmpregistry    :as tmp]
+            [tailrecursion.boot.gitignore      :as git])
+  (:import java.lang.management.ManagementFactory))
 
 (def base-env
   "Returns a basic boot environment map. The `boot.edn` and `~/.boot.edn`
@@ -23,6 +22,7 @@
   (fn []
     {:project       nil
      :version       nil
+     :boot-version  nil
      :dependencies  []
      :src-paths     #{}
      :src-static    #{}
@@ -64,12 +64,13 @@
       (map #(if (vector? %) % [%]))
       (map (fn [[op & args]] `[~(if (keyword? op) op (keyword op)) ~@args])))))
 
-(defn -main [& args]
+(defn -main [loader-info & args]
   (let [boot  (core/init! (base-env))
         {:keys [userfile bootfile]} (:system @boot)
         argv  (or (seq (read-cli-args args)) (list [:help]))
         usr   (if-let [f (exists? userfile)] (read-config f) {})
         cfg   (merge (read-config bootfile) {:main (into [:do] argv)})
-        reqt  {:require-tasks '#{[tailrecursion.boot.core.task :refer :all]}}]
-    ((core/create-app! boot reqt usr cfg) (core/make-event boot))
+        init  {:boot-version  (:boot-version loader-info)
+               :require-tasks '#{[tailrecursion.boot.core.task :refer :all]}}]
+    ((core/create-app! boot init usr cfg) (core/make-event boot))
     (System/exit 0)))

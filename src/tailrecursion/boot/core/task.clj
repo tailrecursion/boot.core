@@ -13,7 +13,7 @@
    [clojure.pprint                 :refer [pprint print-table]]
    [clojure.string                 :refer [split join blank?]]
    [tailrecursion.boot.table.core  :refer [table]]
-   [tailrecursion.boot.core        :refer [deftask mkdir! root-tasks]]))))
+   [tailrecursion.boot.core        :refer [deftask mkdir! root-tasks]]))
 
 (defn first-line [s] (when s (first (split s #"\n"))))
 (defn not-blank? [s] (when-not (blank? s) s))
@@ -29,8 +29,8 @@
         pads (concat [thing] (repeat pad))]
     (join "\n" (map (comp (partial apply str) vector) pads lines))))
 
-(defn version-str []
-  (let [{:keys [proj vers description url license]} (version/info)]
+(defn version-str [boot]
+  (let [{:keys [proj vers description url license]} (:boot-version @boot)]
     (str (format "%s %s: %s\n" (name proj) vers url))))
 
 ;; CORE TASKS ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -44,12 +44,12 @@
   "Print this help info.
   
   Some things more..."
-  ([boot] 
+  ([boot]
      (let [core? #(= "tailrecursion.boot.core" (namespace %))
            tasks (sort (remove core? (keys @root-tasks)))]
        (fn [continue]
          (fn [event]
-           (printf "%s\n" (version-str))
+           (printf "%s\n" (version-str boot))
            (-> ["boot task ..." "boot [task arg arg] ..." "boot [help task]"]
              (->> (pad-left "Usage: ") println))
            (printf "\n%s\n\n" (pad-left "Tasks: " (split (print-tasks tasks) #"\n")))
@@ -61,7 +61,7 @@
        (let [{args :arglists doc :doc} (:meta task*)]
          (fn [continue]
            (fn [event]
-             (printf "%s\n%s\n%s\n  %s\n\n" (version-str) task args doc)
+             (printf "%s\n%s\n%s\n  %s\n\n" (version-str boot) task args doc)
              (flush) 
              (continue event)))))))
 
