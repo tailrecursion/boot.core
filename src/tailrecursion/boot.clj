@@ -64,13 +64,24 @@
       (map #(if (vector? %) % [%]))
       (map (fn [[op & args]] `[~(if (keyword? op) op (keyword op)) ~@args])))))
 
-(defn -main [loader-info & args]
-  (let [boot  (core/init! (base-env))
-        {:keys [userfile bootfile]} (:system @boot)
-        argv  (or (seq (read-cli-args args)) (list [:help]))
-        usr   (if-let [f (exists? userfile)] (read-config f) {})
-        cfg   (merge (read-config bootfile) {:main (into [:do] argv)})
-        init  {:boot-version  (:boot-version loader-info)
-               :require-tasks '#{[tailrecursion.boot.core.task :refer :all]}}]
-    ((core/create-app! boot init usr cfg) (core/make-event boot))
-    (System/exit 0)))
+(def dfl-loader-info
+  '{:boot-version
+    {:proj tailrecursion/boot
+     :vers "[unknown version]"
+     :description ""
+     :url "http://github.com/tailrecursion/boot"
+     :license "EPL"}})
+
+(defn -main [& [loader-info & args :as old-args]]
+  (let [loader?     (map? loader-info)
+        args        (if loader? args old-args)
+        loader-info (if loader? loader-info dfl-loader-info)]
+    (let [boot  (core/init! (base-env))
+          {:keys [userfile bootfile]} (:system @boot)
+          argv  (or (seq (read-cli-args args)) (list [:help]))
+          usr   (if-let [f (exists? userfile)] (read-config f) {})
+          cfg   (merge (read-config bootfile) {:main (into [:do] argv)})
+          init  {:boot-version  (:boot-version loader-info)
+                 :require-tasks '#{[tailrecursion.boot.core.task :refer :all]}}]
+      ((core/create-app! boot init usr cfg) (core/make-event boot))
+      (System/exit 0))))
