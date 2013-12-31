@@ -6,17 +6,7 @@ Please see the main [Boot Repository][1] for more info.
 
 Artifacts are published on [Clojars][6]. 
 
-```clojure
-[tailrecursion/boot.core "1.1.1"]
-```
-
-```xml
-<dependency>
-  <groupId>tailrecursion</groupId>
-  <artifactId>boot.core</artifactId>
-  <version>1.1.1</version>
-</dependency>
-```
+![latest version][7]
 
 ## License
 
@@ -30,3 +20,4 @@ Distributed under the Eclipse Public License, the same as Clojure.
 [4]: https://github.com/technomancy/leiningen
 [5]: https://github.com/tailrecursion/boot/blob/master/boot.edn
 [6]: https://clojars.org/tailrecursion/boot.core
+[7]: https://clojars.org/tailrecursion/javelin/latest-version.svg
