@@ -63,29 +63,9 @@
         {:doc (:doc props) :arglists (:arglists props)}
         (do (require (symbol (namespace op))) (meta (resolve op)))))))
 
-(defn index-of [v val]
-  (ffirst (filter (comp #{val} second) (map vector (range) v))))
-
-(defn exclude [syms coordinate]
-  (if-let [idx (index-of coordinate :exclusions)]
-    (let [exclusions (get coordinate (inc idx))]
-      (assoc coordinate (inc idx) (into exclusions syms)))
-    (into coordinate [:exclusions syms])))
-
-(defn transfer-listener
-  [{type :type meth :method {name :name repo :repository} :resource err :error}]
-  (when (.endsWith name ".jar")
-    (case type
-      :started              (printf "Retrieving %s from %s\n" name repo) 
-      (:corrupted :failed)  (when err (printf "Error: %s\n" (.getMessage err)))
-      nil)
-    (flush)))
-
 (defn add-dependencies! [deps repos]
-  (let [deps (mapv (partial exclude ['org.clojure/clojure]) deps)]
-    (pom/add-dependencies :coordinates        deps
-                          :repositories       (zipmap repos repos)
-                          :transfer-listener  transfer-listener)))
+  (require 'tailrecursion.boot.loader)
+  ((resolve 'tailrecursion.boot.loader/add-dependencies!) deps repos))
 
 (defn add-directories! [dirs]
   (when (seq dirs)
