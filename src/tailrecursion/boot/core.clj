@@ -7,67 +7,29 @@
 ; You must not remove this notice, or any other, from this software.
 
 (ns tailrecursion.boot.core
-  (:refer-clojure :exclude [eval compile])
-  (:require [cemerick.pomegranate           :as pom]
-            [clojure.java.io                :as io]
-            [clojure.set                    :refer [difference]]
-            [clojure.string                 :refer [join]]
-            [clojure.pprint                 :refer [pprint]]
-            [tailrecursion.boot.deps        :as d]
-            [tailrecursion.boot.tmpregistry :as tmp])
-  (:import [java.net URLClassLoader URL]))
+  (:require
+   [cemerick.pomegranate           :as pom]
+   [clojure.java.io                :as io]
+   [clojure.set                    :as set]
+   [tailrecursion.boot.deps        :as deps]
+   [tailrecursion.boot.gitignore   :as git]
+   [tailrecursion.boot.tmpregistry :as tmp])
+  (:import
+   [java.net URLClassLoader URL]
+   java.lang.management.ManagementFactory))
 
-(declare analyze-task eval root-tasks prep-tasks lookup-env)
+(declare boot-env on-env! merge-env!)
 
-;; INTERNAL ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ## Utility Functions
 
-(defmacro guard [expr & [default]]
-  `(try ~expr (catch Throwable _# ~default)))
+(defn- tmpreg []
+  (get-in @boot-env [:system :tmpregistry]))
 
-(def user-ns (create-ns (symbol "tailrecursion.boot.user")))
-(defn user-eval [expr] (binding [*ns* user-ns] (clojure.core/eval expr)))
-(user-eval '(clojure.core/refer 'clojure.core))
-
-(defn load-sym [sym]
-  (when-let [ns (and sym (namespace sym))] (require (symbol ns)))
-  (or (resolve sym) (assert false (format "Can't resolve #'%s." sym))))
-
-(defn require-task [tasks [ns & {:keys [refer as]}]]
-  {:pre [(symbol? ns)
-         (or as refer)
-         (or (nil? as) (symbol? as))
-         (or (nil? refer) (= :all refer) (vector? refer))]}
-  (require ns)
-  (let [t?  #(-> % second meta :tailrecursion.boot.core/task)
-        pub (->> ns ns-publics (filter t?) (into {}))
-        mk  (fn [x] {:meta (meta x) :thunk (var-get x)})
-        r   (when refer
-              (->> pub
-                (filter #(or (= :all refer) (contains? (set refer) (first %))))
-                (map (fn [[k v]] [(keyword k) (mk v)])))) 
-        a   (when as
-              (->> pub
-                (map (fn [[k v]] [(keyword (str as) (str k)) (mk v)]))))] 
-    (merge (reduce into {} [r a]) tasks)))
-
-(defn require-tasks! [clauses]
-  (swap! root-tasks (partial reduce require-task) clauses))
-
-(defn task-meta [props]
-  (let [[op & args] (:main props)
-        dfl-meta '{:arglists ([boot & args])
-                   :doc "No documentation for this task."}]
-    (merge-with #(or %2 %1)
-      dfl-meta
-      (if-not (and (symbol? op) (namespace op))
-        {:doc (:doc props) :arglists (:arglists props)}
-        (do (require (symbol (namespace op))) (meta (resolve op)))))))
-
-(defn add-dependencies! [deps repos]
+(defn- add-dependencies! [deps repos]
   (require 'tailrecursion.boot.loader)
   ((resolve 'tailrecursion.boot.loader/add-dependencies!) deps repos))
 
-(defn add-directories! [dirs]
+(defn- add-directories! [dirs]
   (when (seq dirs)
     (let [meth  (doto (.getDeclaredMethod URLClassLoader "addURL" (into-array Class [URL]))
                   (.setAccessible true))
@@ -75,96 +37,184 @@
           urls  (->> dirs (map io/file) (filter #(.exists %)) (map #(.. % toURI toURL)))]
       (doseq [url urls] (.invoke meth cldr (object-array [url]))))))
 
-(defn configure! [old new]
-  (let [[nd od] [(:dependencies  new) (:dependencies  old)] 
-        [ns os] [(:src-paths     new) (:src-paths     old)]
-        [nr or] [(:require-tasks new) (:require-tasks old)]]
-    (when-not (= nd od) (add-dependencies! nd (:repositories new)))
-    (when-not (= ns os) (add-directories! (difference ns os)))
-    (when-not (= nr or) (require-tasks! (difference nr or)))))
+(defn- configure!* [old new]
+  (doseq [k (set/union (set (keys old)) (set (keys new)))]
+    (let [o (get old k ::noval)
+          n (get new k ::noval)]
+      (if (not= o n) (on-env! k o n new)))))
 
-(defmacro dotmp [this & body] `(-> ~this (get-in [:system :tmpregistry]) ~@body))
+(def ^:private base-env
+  (fn []
+    {:project       nil
+     :version       nil
+     :boot-version  nil
+     :dependencies  []
+     :src-paths     #{}
+     :src-static    #{}
+     :repositories  #{"http://clojars.org/repo/"
+                      "http://repo1.maven.org/maven2/"}
+     :test          "test"
+     :target        "target"
+     :resources     "resources"
+     :public        "resources/public"
+     :system        {:cwd         (io/file (System/getProperty "user.dir"))
+                     :home        (io/file (System/getProperty "user.home"))
+                     :jvm-opts    (vec (.. ManagementFactory getRuntimeMXBean getInputArguments))
+                     :tmpregistry (tmp/init! (tmp/registry (io/file ".boot" "tmp")))
+                     :gitignore   (git/make-gitignore-matcher)}}))
 
-;; BOOT EVALUATOR ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ## Boot Environment Extensions
 
-(def root-tasks (atom {}))
-(def prep-tasks (atom []))
+(def boot-env
+  "Atom containing environment key/value pairs. Environment should not be
+  manipulated directly, instead use `set-env!` below. See also the `on-env!`
+  and `merge-env!` multimethods below."
+  (atom nil))
 
-(defmulti  analyze (fn [k v] k) :default ::default)
-(defmethod analyze :require-tasks [k v] #(swap! % update-in [k] into v))
-(defmethod analyze :repositories  [k v] #(swap! % update-in [k] into v))
-(defmethod analyze :dependencies  [k v] #(swap! % update-in [k] into v))
-(defmethod analyze :src-static    [k v] #(swap! % update-in [k] into v))
-(defmethod analyze :src-paths     [k v] #(swap! % update-in [k] into v))
-(defmethod analyze :require       [k v] (fn [_] (doseq [ns v] `(require '~ns))))
-(defmethod analyze :tasks         [k v] (fn [_] (doseq [[t p] v] (analyze-task t p))))
-(defmethod analyze ::default      [k v] #(swap! % assoc k v))
+(doto boot-env (reset! (base-env)) (add-watch ::boot #(configure!* %3 %4)))
 
-(defn analyze-task [task props]
-  (let [preps [:src-paths :repositories :dependencies :require-tasks]]
-    (->>
-      (fn [env & args]
-        (doseq [k preps] (when (contains? props k) ((analyze k (get props k)) env)))
-        (doseq [[k v] (apply dissoc props :main :doc :arglists preps)] ((analyze k v) env))
-        (if-let [main (:main props)] (eval env main args) (eval env [:do] nil)))
-      (hash-map :meta (task-meta props) :thunk)
-      (swap! root-tasks assoc task))))
+(defmulti on-env!
+  "Event handler called when the boot atom is modified. This handler is for
+  performing side-effects associated with maintaining the application state in
+  the boot atom. For example, when `:dependencies` is modified the handler
+  fetches dependency JARs from Maven and adds them to the classpath."
+  (fn [key old-value new-value env] key) :default ::default)
 
-(defmulti  lookup identity :default ::default)
-(defmethod lookup :do       [op] (fn [env & args] (doseq [x args] (eval env x nil))))
-(defmethod lookup ::default [op] (lookup-env op))
+(defmethod on-env! ::default     [key old new env] nil)
+(defmethod on-env! :dependencies [key old new env] (add-dependencies! new (:repositories env)))
+(defmethod on-env! :src-paths    [key old new env] (add-directories! (set/difference new old)))
 
-(defn lookup-env [op]
-  (cond
-    (symbol?  op) (load-sym op)
-    (seq?     op) (user-eval op)
-    (keyword? op) (:thunk (get @root-tasks op))))
+(defmulti merge-env!
+  "This function is used to modify how new values are merged into the boot atom
+  when `set-env!` is called. This function's result will become the new value
+  associated with the given `key` in the boot atom."
+  (fn [key old-value new-value env] key) :default ::default)
 
-(defn eval [env [op & args1] args2]
-  (let [opfn (lookup op)
-        args (if (seq args2) args2 args1)]
-    (assert opfn (str "no such task (" op ")"))
-    (swap! prep-tasks conj (apply opfn env args))))
+(defmethod merge-env! ::default      [key old new env] new)
+(defmethod merge-env! :repositories  [key old new env] (into (or old #{}) new))
+(defmethod merge-env! :dependencies  [key old new env] (into (or old  []) new))
+(defmethod merge-env! :src-static    [key old new env] (into (or old #{}) new))
+(defmethod merge-env! :src-paths     [key old new env] (into (or old #{}) new))
 
-(defn compile [boot & props]
-  (let [mkkw #(keyword (gensym "tailrecursion.boot.core/task-"))]
-    (loop [[p & q] props, expr [:do [(mkkw)]]]
-      (analyze-task (first (last expr)) p)
-      (if (seq q) (recur q (conj expr [(mkkw)])) (eval boot expr nil)))
-    (apply comp (filter fn? @prep-tasks))))
+;; ## Boot API Functions
 
-;; BOOT API ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn ignored?
+  "Returns truthy if the file f is ignored in the user's gitignore config."
+  [f]
+  ((get-in @boot-env [:system :gitignore]) f))
 
-(defn ignored?  [this f]            ((get-in @this [:system :gitignore]) f))
-(defn tmpfile?  [this f]            (dotmp @this (tmp/tmpfile? f)))
-(defn mk!       [this key & [name]] (dotmp @this (tmp/mk! key name)))
-(defn mkdir!    [this key & [name]] (dotmp @this (tmp/mkdir! key name)))
-(defn unmk!     [this key]          (dotmp @this (tmp/unmk! key)) this)
-(defn add-sync! [this dst & [srcs]] (dotmp @this (tmp/add-sync! dst srcs)) this)
-(defn sync!     [this]              (dotmp @this (tmp/sync!)) this)
-(defn deps      [this]              (d/deps this))
+(defn tmpfile?
+  "Returns truthy if the file f is a tmpfile managed by the tmpregistry."
+  [f]
+  (tmp/tmpfile? (tmpreg) f))
 
-(defmacro deftask [name & args]
-  `(defn ~(with-meta name {::task true}) ~@args))
+(defn mk!
+  "Create a temp file and return its `File` object. If `mk!` has already been
+  called with the given `key` the tmpfile will be truncated. The optional `name`
+  argument can be used to customize the temp file name (useful for creating temp
+  files with a specific file extension, for example)."
+  [key & [name]]
+  (tmp/mk! (tmpreg) key name))
+
+(defn mkdir!
+  "Create a temp directory and return its `File` object. If `mkdir!` has already
+  been called with the given `key` the directory's contents will be deleted. The
+  optional `name` argument can be used to customize the temp directory name, as
+  with `mk!` above."
+  [key & [name]]
+  (tmp/mkdir! (tmpreg) key name))
+
+(defn unmk!
+  "Delete the temp file or directory created with the given `key`."
+  [key]
+  (tmp/unmk! (tmpreg) key))
+
+(defn add-sync!
+  "Specify directories to sync after build event. The `dst` argument is the 
+  destination directory. The `srcs` are an optional list of directories whose
+  contents will be copied into `dst`. The `add-sync!` function is associative,
+  for example:
+
+  ```
+  ;; These are equivalent:
+  (add-sync! bar baz baf)
+  (do (add-sync! bar) (add-sync! baz baf))
+  ```"
+  [dst & [srcs]]
+  (tmp/add-sync! (tmpreg) dst srcs))
+
+(defn sync!
+  "Trigger syncing of directories added via `add-sync!` now. This is used
+  internally by boot."
+  []
+  (tmp/sync! (tmpreg)))
+
+(defn deps
+  "Returns (FIXME: what exactly does this return?)"
+  []
+  (deps/deps boot-env))
+
+
+(defmacro deftask
+  "Define a new task. Task definitions may contain nested task definitions.
+  Nested task definitions are reified when the task they're nested in is run.
+
+  A typical task definition might look like this:
+
+  ```
+  (deftask my-task [& args]
+    ;; Optionally set environment keys:
+    (set-env!
+      :repositories #{...}
+      :dependencies [[...]]
+      ...)
+  
+    ;; Optionally require some namespaces:
+    (require
+      '[com.me.my-library :as mylib])
+  
+    ;; Return middleware function (or #'clojure.core/identity to pass thru to
+    ;; next middleware without doing anything).
+    (fn [continue]
+      (fn [event]
+        (mylib/do-something args))))
+  ```"
+  [name & forms]
+  (let [[_ name [_ & arities]] (macroexpand-1 `(defn ~name ~@forms))
+        arity (fn [[bind & body]] `(~bind ~@(for [x body] `(eval '~x))))]
+    `(def ~(vary-meta name assoc ::task true) (fn ~@(map arity arities)))))
+
+(defn set-env!
+  "Update the boot environment atom `this` with the given key-value pairs given
+  in `kvs`. See also `on-env!` and `merge-env!`."
+  [& kvs]
+  (doseq [[k v] (partition 2 kvs)]
+    (swap! boot-env update-in [k] (partial merge-env! k) v @boot-env)))
+
+(defn get-env
+  "Returns the value associated with the key `k` in the boot environment, or
+  `not-found` if the environment doesn't contain key `k` and `not-found` was
+  given. Calling this function with no arguments returns the environment map."
+  [& [k not-found]]
+  (if k (get @boot-env k not-found) @boot-env))
 
 (defn make-event
-  ([boot]
-   (make-event boot {}))
-  ([boot event]
-   (let [srcs    (->> @boot :src-paths (map io/file)
+  "Creates a new event map with base info about the build event. If the `event`
+  argument is given the new event map is merged into it. This event map is what
+  is passed down through the handler functions during the build."
+  ([] (make-event {}))
+  ([event]
+   (let [srcs    (->> @boot-env :src-paths (map io/file)
                       (mapcat file-seq) (filter #(.isFile %)))
-         watched (->> srcs (remove (partial ignored? boot)) set)]
+         watched (->> srcs (remove (partial ignored? boot-env)) set)]
      (merge event {:id        (gensym)
                    :time      (System/currentTimeMillis)
                    :watch     {:time watched, :hash watched}
                    :src-files (set srcs)}))))
 
-(defn init! [env]
-  (doto (atom env) (add-watch ::_ #(configure! %3 %4))))
-
-(defn create-app! [boot & props]
-  (let [app (apply compile boot props)
-        tmp (get-in @boot [:system :tmpregistry])]
-    (when (and (:public @boot) (seq (:src-static @boot)))
-      (add-sync! boot (:public @boot) (map io/file (:src-static @boot))))
-    (app #(do (tmp/sync! tmp) (flush) %))))
+(defmacro boot
+  "Builds the project as if `argv` was given on the command line."
+  [& argv]
+  (let [->list #(cond (seq? %) % (vector? %) (seq %) :else (list %))
+        ->mw   #(if (< 1 (count %)) % (first %))]
+    `((~(->mw (map ->list argv)) #(do (sync!) (flush) %)) (make-event))))

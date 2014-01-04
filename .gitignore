@@ -16,4 +16,5 @@ pom.xml.asc
 *.swp
 .boot/tmp
 /boot
+/build.clj
 /docs

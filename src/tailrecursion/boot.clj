@@ -6,82 +6,70 @@
 ; the terms of this license.
 ; You must not remove this notice, or any other, from this software.
 
-;;
 (ns tailrecursion.boot
-  (:require [clojure.string                    :as string]
-            [clojure.java.io                   :as io]
-            [clojure.pprint                    :refer [pprint]]
-            [tailrecursion.boot.core           :as core]
-            [tailrecursion.boot.tmpregistry    :as tmp]
-            [tailrecursion.boot.gitignore      :as git])
-  (:import java.lang.management.ManagementFactory))
+  (:require
+   [clojure.string                  :as string]
+   [clojure.java.io                 :as io]
+   [clojure.pprint                  :as pprint]
+   [tailrecursion.boot.core         :as core]
+   [tailrecursion.boot.file         :as file]
+   [tailrecursion.boot.semver       :as semver]
+   [tailrecursion.boot.tmpregistry  :as tmp]
+   [tailrecursion.boot.gitignore    :as git]))
 
-(def base-env
-  "Returns a basic boot environment map. The `boot.edn` and `~/.boot.edn`
-  configuration is merged into this and stored in a boot atom."
-  (fn []
-    {:project       nil
-     :version       nil
-     :boot-version  nil
-     :dependencies  []
-     :src-paths     #{}
-     :src-static    #{}
-     :repositories  #{"http://clojars.org/repo/"
-                      "http://repo1.maven.org/maven2/"}
-     :require-tasks '#{}
-     :test          "test"
-     :target        "target"
-     :resources     "resources"
-     :public        "resources/public"
-     :system        {:cwd         (io/file (System/getProperty "user.dir"))
-                     :home        (io/file (System/getProperty "user.home"))
-                     :jvm-opts    (vec (.. ManagementFactory getRuntimeMXBean getInputArguments))
-                     :bootfile    (io/file (System/getProperty "user.dir") "boot.edn")
-                     :userfile    (io/file (System/getProperty "user.home") ".boot.edn")
-                     :tmpregistry (tmp/init! (tmp/registry (io/file ".boot" "tmp")))
-                     :gitignore   (git/make-gitignore-matcher)}
-     :tasks         {}}))
+(def min-loader-version "1.0.0")
+(def max-loader-version "2.0.0")
 
-(defn exists? [f]
-  (when (core/guard (.exists f)) f))
+(defmacro with-rethrow [expr msg]
+  `(try ~expr (catch Throwable e# (throw (Exception. ~msg e#)))))
 
-(defn read-file [f]
-  (try (read-string (str "(" (try (slurp f) (catch Throwable x)) ")"))
-    (catch Throwable e
-      (throw (Exception.
-               (format "%s (Can't read forms from file)" (.getPath f)) e)))))
+(defn pp      [expr] (pprint/write expr :dispatch pprint/code-dispatch))
+(defn pp-str  [expr] (with-out-str (pp expr)))
 
-(defn read-config [f]
-  (let [config (first (read-file f))
-        asrt-m #(do (assert (map? %1) %2) %1)]
-    (asrt-m config (format "%s (Configuration must be a map)" (.getPath f)))))
+(defn lines-seq [f]
+  (with-rethrow
+    (with-open [r (io/reader f)] (doall (line-seq r)))
+    (format "can't read file: %s" f)))
 
-(defn read-cli-args [args]
-  (let [s (try (read-string (str "(" (string/join " " args) ")"))
-            (catch Throwable e
-              (throw (Exception. "Can't read command line forms" e))))]
-    (->> s
-      (map #(if (vector? %) % [%]))
-      (map (fn [[op & args]] `[~(if (keyword? op) op (keyword op)) ~@args])))))
+(defn read-script [f]
+  (with-rethrow
+    (read-string (str "(" (string/join "\n" (rest (lines-seq f))) ")"))
+    (format "can't read file as EDN: %s" (.getPath f))))
 
-(def dfl-loader-info
-  '{:boot-version
-    {:proj tailrecursion/boot
-     :vers "[unknown version]"
-     :description ""
-     :url "http://github.com/tailrecursion/boot"
-     :license "EPL"}})
+(defn read-cli [argv]
+  (with-rethrow
+    (read-string (str "(" (string/join " " argv) ")"))
+    (format "can't read command line as EDN: %s" argv)))
 
-(defn -main [& [loader-info & args :as old-args]]
-  (let [loader?     (map? loader-info)
-        args        (if loader? args old-args)
-        loader-info (if loader? loader-info dfl-loader-info)]
-    (let [boot  (core/init! (base-env))
-          {:keys [userfile bootfile]} (:system @boot)
-          argv  (or (seq (read-cli-args args)) (list [:help]))
-          usr   (if-let [f (exists? userfile)] (read-config f) {})
-          cfg   (merge (read-config bootfile) {:main (into [:do] argv)})
-          init  {:boot-version  (:boot-version loader-info)
-                 :require-tasks '#{[tailrecursion.boot.core.task :refer :all]}}]
-      ((core/create-app! boot init usr cfg) (core/make-event boot))
-      (System/exit 0))))
+(defn build-script [forms argv argv*]
+  `(~'(ns tailrecursion.boot.user
+        (:require
+         [tailrecursion.boot.core :refer :all]
+         [tailrecursion.boot.core.task :refer :all]))
+    ~@forms
+    (if-let [main# (resolve '~'-main)]
+      (main# ~@argv)
+      (core/boot ~@argv*))))
+
+(defn add-linums [text]
+  (let [lines  (string/split text #"\n")
+        doline #(printf "%d %s\n" (inc %1) %2)]
+    (with-out-str (doall (map-indexed doline lines)))))
+
+(defn assert-loader-version [info]
+  (let [ver  (get (if (map? info) info {}) :vers "0.0.0")
+        [min max :as vers] (list min-loader-version max-loader-version)
+        [ver* min* max*] (map #(:major (semver/version %)) (cons ver vers))]
+    (assert (and (<= min* ver*) (< ver* max*))
+      (format "boot executable version is %s: [%s, %s) required" ver min max))))
+
+(defn -main [loader-info script-file & argv]
+  (assert-loader-version loader-info)
+  (let [argv*  (or (seq (read-cli argv)) '(help))
+        tmpf   (.getPath (file/tmpfile "boot-" ".clj"))
+        forms  (build-script (read-script (io/file script-file)) argv argv*)
+        script (string/join "\n\n" (map pp-str forms))]
+    (core/set-env! :boot-version loader-info :bootscript tmpf)
+    (with-rethrow
+      (doto tmpf (spit script) (load-file))
+      (format "\n\n%s" (add-linums script)))))

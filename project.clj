@@ -9,5 +9,4 @@
                  [me.raynes/conch                 "0.5.0" :exclusions [org.clojure/clojure]]
                  [com.cemerick/pomegranate        "0.2.0" :exclusions [org.clojure/clojure]]
                  [digest                          "1.4.3" :exclusions [org.clojure/clojure]]]
-  :main         tailrecursion.boot
-  :profiles     {:dev {:dependencies [[tailrecursion/boot "0.2.2"]]}})
+  :profiles     {:dev {:source-paths ["../boot/src" "src"]}})

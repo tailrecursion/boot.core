@@ -13,16 +13,17 @@
    [clojure.pprint                 :refer [pprint print-table]]
    [clojure.string                 :refer [split join blank?]]
    [tailrecursion.boot.table.core  :refer [table]]
-   [tailrecursion.boot.core        :refer [deftask mkdir! root-tasks]]))
+   [tailrecursion.boot.core        :refer [deftask mkdir!]]))
 
 (defn first-line [s] (when s (first (split s #"\n"))))
 (defn not-blank? [s] (when-not (blank? s) s))
 
 (defn print-tasks [tasks]
-  (let [get-task  #(-> % str (subs 1))
-        get-desc  #(->> % (get @root-tasks) :meta :doc first-line)
-        get-row   (fn [x] [(get-task x) (get-desc x)])]
-    (with-out-str (table (into [["" ""]] (map get-row tasks)) :style :none))))
+  (comment
+    (let [get-task  #(-> % str (subs 1))
+          get-desc  #(->> % (get @root-tasks) :meta :doc first-line)
+          get-row   (fn [x] [(get-task x) (get-desc x)])]
+      (with-out-str (table (into [["" ""]] (map get-row tasks)) :style :none)))))
 
 (defn pad-left [thing lines]
   (let [pad (apply str (repeat (count thing) " "))
@@ -37,33 +38,39 @@
 
 (deftask nop
   "Does nothing."
-  [boot]
+  []
   (fn [continue] (fn [event] (continue event))))
 
 (deftask help
   "Print this help info.
   
   Some things more..."
-  ([boot]
-     (let [core? #(= "tailrecursion.boot.core" (namespace %))
-           tasks (sort (remove core? (keys @root-tasks)))]
-       (fn [continue]
-         (fn [event]
-           (printf "%s\n" (version-str boot))
-           (-> ["boot task ..." "boot [task arg arg] ..." "boot [help task]"]
-             (->> (pad-left "Usage: ") println))
-           (printf "\n%s\n\n" (pad-left "Tasks: " (split (print-tasks tasks) #"\n")))
-           (flush)
-           (continue event)))))
-  ([boot task]
-     (let [task* (get @root-tasks (keyword task))]
-       (assert task* (str "no such task (" task ")"))
-       (let [{args :arglists doc :doc} (:meta task*)]
+  ([]
+     (comment
+       (let [core? #(= "tailrecursion.boot.core" (namespace %))
+             tasks (sort (remove core? (keys @root-tasks)))]
          (fn [continue]
            (fn [event]
-             (printf "%s\n%s\n%s\n  %s\n\n" (version-str boot) task args doc)
-             (flush) 
-             (continue event)))))))
+             (printf "%s\n" (version-str boot))
+             (-> ["boot task ..." "boot [task arg arg] ..." "boot [help task]"]
+               (->> (pad-left "Usage: ") println))
+             (printf "\n%s\n\n" (pad-left "Tasks: " (split (print-tasks tasks) #"\n")))
+             (flush)
+             (continue event)))))
+     (println "== help ==")
+     identity)
+  ([task]
+     (comment
+       (let [task* (get @root-tasks (keyword task))]
+         (assert task* (str "no such task (" task ")"))
+         (let [{args :arglists doc :doc} (:meta task*)]
+           (fn [continue]
+             (fn [event]
+               (printf "%s\n%s\n%s\n  %s\n\n" (version-str boot) task args doc)
+               (flush) 
+               (continue event))))))
+     (println "== help 2 ==")
+     identity))
 
 (def ^:dynamic *sh-dir* nil)
 
@@ -93,27 +100,28 @@
   
   The new boot executable will be created either with the path specified by the
   outfile argument or at ./boot if outfile isn't provided."
-  [boot & [outfile]]
-  (let [pdir (mkdir! boot ::optimize)
-        faot (file pdir "src" "tailrecursion" "boot" "forceaot.clj")
-        pclj (file pdir "project.clj")]
-    ((sh "git" "clone" "git@github.com:tailrecursion/boot" (.getPath pdir)))
-    (let [proj (->> pclj slurp read-string)
-          head (take 3 proj)
-          opts (->> proj (drop 3) (apply hash-map))
-          excl {:uberjar-exclusions (or (:uberjar-exclusions @boot) [])}
-          deps (into (:dependencies opts) (:dependencies @boot))
-          keys (merge excl (assoc opts :dependencies deps))
-          proj (concat head (mapcat identity keys))
-          task (map first (:require-tasks @boot))
-          aots (list 'ns 'tailrecursion.boot.forceaot
-                 (list* :require task)
-                 (list :gen-class))]
-      (spit pclj (pp-str proj))
-      (spit faot (pp-str aots))
-      ((binding [*sh-dir* pdir] (sh "make" "boot")))
-      (copy (file pdir "boot") (file (or outfile "boot"))))
-    identity))
+  [& [outfile]]
+  (comment
+    (let [pdir (mkdir! boot ::optimize)
+          faot (file pdir "src" "tailrecursion" "boot" "forceaot.clj")
+          pclj (file pdir "project.clj")]
+      ((sh "git" "clone" "git@github.com:tailrecursion/boot" (.getPath pdir)))
+      (let [proj (->> pclj slurp read-string)
+            head (take 3 proj)
+            opts (->> proj (drop 3) (apply hash-map))
+            excl {:uberjar-exclusions (or (:uberjar-exclusions @boot) [])}
+            deps (into (:dependencies opts) (:dependencies @boot))
+            keys (merge excl (assoc opts :dependencies deps))
+            proj (concat head (mapcat identity keys))
+            task (map first (:require-tasks @boot))
+            aots (list 'ns 'tailrecursion.boot.forceaot
+                   (list* :require task)
+                   (list :gen-class))]
+        (spit pclj (pp-str proj))
+        (spit faot (pp-str aots))
+        ((binding [*sh-dir* pdir] (sh "make" "boot")))
+        (copy (file pdir "boot") (file (or outfile "boot"))))
+      identity)))
 
 (deftask lein
   "Run a leiningen task.
@@ -126,17 +134,18 @@
 
   Note that leiningen is run in another process. This task cannot be used to run
   interactive lein tasks because stdin is not piped to the leiningen process."
-  [boot & args]
-  (let [pfile (file "project.clj")
-        pname (or (:project @boot) 'boot-project)
-        pvers (or (:version @boot) "0.1.0-SNAPSHOT")
-        head  (list 'defproject pname pvers
-                :dependencies (:dependencies @boot)
-                :source-paths (vec (:src-paths @boot)))]
-    (assert (not (.exists pfile)) "A project.clj file already exists.")
-    (.deleteOnExit pfile)
-    (spit pfile (pp-str (concat head (mapcat identity (:lein @boot)))))
-    (fn [continue]
-      (fn [event]
-        ((apply sh "lein" (map str args)))
-        (continue event)))))
+  [& args]
+  (comment
+    (let [pfile (file "project.clj")
+          pname (or (:project @boot) 'boot-project)
+          pvers (or (:version @boot) "0.1.0-SNAPSHOT")
+          head  (list 'defproject pname pvers
+                  :dependencies (:dependencies @boot)
+                  :source-paths (vec (:src-paths @boot)))]
+      (assert (not (.exists pfile)) "A project.clj file already exists.")
+      (.deleteOnExit pfile)
+      (spit pfile (pp-str (concat head (mapcat identity (:lein @boot)))))
+      (fn [continue]
+        (fn [event]
+          ((apply sh "lein" (map str args)))
+          (continue event))))))
