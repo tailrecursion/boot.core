@@ -6,7 +6,7 @@ Please see the main [Boot Repository][1] for more info.
 
 Artifacts are published on [Clojars][6]. 
 
-![latest version][7]
+[![latest version][7]][6]
 
 ## License
 

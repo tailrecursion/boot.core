@@ -130,11 +130,15 @@
         rm (map #(vector :rm (file dst %)) to-rm)]
     (concat cp rm)))
 
+(defn sync*
+  [ops]
+  (let [opfn {:cp #(copy-with-lastmod (nth % 1) (nth % 2))
+              :rm #(.delete (nth % 1))}]
+    (doseq [[op s d :as cmd] ops] ((opfn op) cmd))))
+
 (defn sync
   [algo dst src & srcs]
-  (let [op {:cp #(copy-with-lastmod (nth % 1) (nth % 2))
-            :rm #(.delete (nth % 1))}]
-    (doall (map #((op (first %)) %) (apply diff algo dst src srcs)))))
+  (sync* (apply diff algo dst src srcs)))
 
 (defn make-watcher [dir]
   (let [prev (atom nil)]

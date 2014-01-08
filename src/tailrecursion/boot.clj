@@ -11,7 +11,10 @@
    [clojure.string                  :as string]
    [clojure.java.io                 :as io]
    [clojure.pprint                  :as pprint]
+   [clojure.stacktrace              :as trace]
+   [tailrecursion.warp              :as !]
    [tailrecursion.boot.core         :as core]
+   [tailrecursion.boot.core.task    :as task]
    [tailrecursion.boot.file         :as file]
    [tailrecursion.boot.semver       :as semver]
    [tailrecursion.boot.tmpregistry  :as tmp]
@@ -20,56 +23,95 @@
 (def min-loader-version "1.0.0")
 (def max-loader-version "2.0.0")
 
+(defn print-traces [e nelems]
+  (cond
+    (nil?  nelems) (trace/print-cause-trace e)
+    (zero? nelems) (loop [e e, s ""]
+                     (printf "%s%s\n" s (.getMessage e))
+                     (when-let [e (.getCause e)] (recur e "↳ Caused by: ")))
+    :else          (trace/print-cause-trace e nelems)))
+
+(defmacro with-terminate [& body]
+  `(try
+     ~@body
+     (System/exit 0)
+     (catch Throwable e#
+       (binding [*out* *err*]
+         (print-traces e# (:v core/*opts*))
+         (System/exit 1)))))
+
 (defmacro with-rethrow [expr msg]
   `(try ~expr (catch Throwable e# (throw (Exception. ~msg e#)))))
 
 (defn pp      [expr] (pprint/write expr :dispatch pprint/code-dispatch))
 (defn pp-str  [expr] (with-out-str (pp expr)))
 
-(defn lines-seq [f]
-  (with-rethrow
-    (with-open [r (io/reader f)] (doall (line-seq r)))
-    (format "can't read file: %s" f)))
-
-(defn read-script [f]
-  (with-rethrow
-    (read-string (str "(" (string/join "\n" (rest (lines-seq f))) ")"))
-    (format "can't read file as EDN: %s" (.getPath f))))
-
 (defn read-cli [argv]
-  (with-rethrow
-    (read-string (str "(" (string/join " " argv) ")"))
-    (format "can't read command line as EDN: %s" argv)))
+  (let [src (str "(" (string/join " " argv) ")")]
+    (with-rethrow
+      (read-string src)
+      (format "Can't read command line as EDN: %s" src))))
 
-(defn build-script [forms argv argv*]
+(defn parse-cli [argv]
+  (!/try*
+    (let [opt?   (comp keyword? first)
+          dfltsk `(((core/get-env :default-task)))
+          ->opt  #(if (< 1 (count %)) (vec %) [(first %) nil])
+          ->expr #(cond (seq? %) % (vector? %) (list* %) :else (list %))
+          tasks  (->> (or (seq (read-cli argv)) dfltsk) (map ->expr))
+          argv*  (or (->> tasks (remove opt?) seq) dfltsk)
+          opts   (->> tasks (filter opt?) (map ->opt) (into {}))]
+      (set! core/*opts* (merge core/*opts* opts))
+      argv*)
+    (with-out-str (print-traces !/*e* (:v core/*opts*)))))
+
+(defn build-script [forms argv argv* edn-ex]
   `(~'(ns tailrecursion.boot.user
         (:require
-         [tailrecursion.boot.core :refer :all]
-         [tailrecursion.boot.core.task :refer :all]))
+         [tailrecursion.boot.core.task :refer :all]
+         [tailrecursion.boot.core :refer :all :exclude [deftask]]))
+    (defmacro ~'deftask
+        [~'& ~'args]
+        (list* '~'deftask* ~'args))
     ~@forms
     (if-let [main# (resolve '~'-main)]
       (main# ~@argv)
-      (core/boot ~@argv*))))
+      ~(if edn-ex
+         `(binding [*out* *err*]
+            (print ~edn-ex)
+            (System/exit 1))
+         `(core/boot ~@argv*)))))
 
-(defn add-linums [text]
-  (let [lines  (string/split text #"\n")
-        doline #(printf "%d %s\n" (inc %1) %2)]
-    (with-out-str (doall (map-indexed doline lines)))))
+(defn loader-version-compatible? [loader-version]
+  (let [[ver min max] [loader-version min-loader-version max-loader-version]]
+    (and ver (not (semver/older? ver min)) (semver/older? ver max))))
 
 (defn assert-loader-version [info]
-  (let [ver  (get (if (map? info) info {}) :vers "0.0.0")
-        [min max :as vers] (list min-loader-version max-loader-version)
-        [ver* min* max*] (map #(:major (semver/version %)) (cons ver vers))]
-    (assert (and (<= min* ver*) (< ver* max*))
-      (format "boot executable version is %s: [%s, %s) required" ver min max))))
+  (let [ver (get info 'tailrecursion/boot)]
+    (assert (loader-version-compatible? ver)
+      (format "Boot executable version is %s: boot.core requires [%s, %s)"
+        (or ver "too old") min-loader-version max-loader-version))))
 
-(defn -main [loader-info script-file & argv]
-  (assert-loader-version loader-info)
-  (let [argv*  (or (seq (read-cli argv)) '(help))
-        tmpf   (.getPath (file/tmpfile "boot-" ".clj"))
-        forms  (build-script (read-script (io/file script-file)) argv argv*)
-        script (string/join "\n\n" (map pp-str forms))]
-    (core/set-env! :boot-version loader-info :bootscript tmpf)
-    (with-rethrow
-      (doto tmpf (spit script) (load-file))
-      (format "\n\n%s" (add-linums script)))))
+(def dfl-opts {:v 0})
+
+(defn -main [loader-info script-file script-forms & argv]
+  (binding [core/*opts* dfl-opts]
+    (with-terminate
+      (assert-loader-version loader-info)
+      (let [vers   (get loader-info 'tailrecursion/boot)
+            cljarg (parse-cli argv)
+            ex     (when (string? cljarg) cljarg)
+            argv*  (when-not (string? cljarg) cljarg)
+            forms  (build-script script-forms argv argv* ex)
+            script (-> (string/join "\n\n" (map pp-str forms)) (str "\n"))]
+        (core/init!
+          :boot-version vers
+          :boot-info    loader-info
+          :boot-script  script-file
+          :dependencies (:dependencies loader-info)
+          :default-task task/help)
+        (let [tmpd (core/mktmpdir! ::bootscript)
+              file #(doto (apply io/file %&) io/make-parents)
+              tmpf (.getPath (file tmpd "tailrecursion" "boot" "user.clj"))]
+          (core/set-env! :boot-user-ns-file tmpf)
+          (doto tmpf (spit script) (load-file)))))))
