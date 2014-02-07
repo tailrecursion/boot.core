@@ -8,7 +8,7 @@
             [tailrecursion.boot.core :as core]))
 
 (def default-cfg
-  "Default configuration is merged with the options passed to repl task"
+  "Default configuration is deep-merged with the options passed to repl task"
   {:host "127.0.0.1"
    :port 0
    :middlewares []
@@ -16,6 +16,13 @@
    :init-ns 'user
    :repl-options {:history-file (str (io/file ".repl-history"))
                   :input-stream System/in}})
+
+(defn deep-merge
+  "Recursively merges maps. If vals are not maps, chooses last value"
+  [& vals]
+  (if (every? map? vals)
+    (apply merge-with deep-merge vals)
+    (last vals)))
 
 (def ^:private nrepl-port-file (io/file ".nrepl-port"))
 
@@ -26,18 +33,18 @@
 
 (defn ^:private nrepl-started-msg
   [host port]
-  (str "nREPL server started on port " port " on host " host " - nrepl://" host ":" port))
+  (str "nREPL server started on port " port " on host " host
+       " - nrepl://" host ":" port))
 
 (defn ^:private start-server
   [{:as cfg
     :keys [host middlewares ack-port]}]
   (let [headless? (nil? ack-port)
-        server (-> cfg
-                   (clojure.set/rename-keys {:host :bind})
-                   (assoc :handler (apply nrepl.server/default-handler middlewares))
-                   (->> (apply concat)
-                        (apply nrepl.server/start-server)))
-        port (:port server)]
+        cfg (-> (clojure.set/rename-keys cfg {:host :bind})
+                (assoc :handler (apply nrepl.server/default-handler middlewares))
+                (select-keys [:bind :port :handler :ack-port]))
+        {:as server :keys [port]} (->> (apply concat cfg)
+                                       (apply nrepl.server/start-server))]
     (when headless?
       (println (nrepl-started-msg host port)))
     (spit (doto nrepl-port-file .deleteOnExit) port)
@@ -68,6 +75,15 @@
                                        :welcome :custom-help})
         (if (:port opts) (update-in opts [:port] str) opts)))
 
+(defn ^:private client
+  [{:keys [repl-options]} attach]
+  (require 'reply.main)
+  (when (and (string? attach) (.startsWith attach "http:"))
+    ;; todo: should we dynamically add dep to project here?
+    (require 'cemerick.drawbridge.client))
+  ((resolve 'reply.main/launch-nrepl)
+   (options-for-reply repl-options :attach attach)))
+
 (defn ^:private connect-string
   [opts]
   (as-> (str (first opts)) x
@@ -81,15 +97,6 @@
         (if (re-find #":\d+($|/.*$)" x)
           x
           (throw (ex-info "Port is required" {:connect-string x})))))
-
-(defn ^:private client
-  [{:keys [repl-options]} attach]
-  (require 'reply.main)
-  (when (and (string? attach) (.startsWith attach "http:"))
-    ;; todo: should we dynamically add dep to project here?
-    (require 'cemerick.drawbridge.client))
-  ((resolve 'reply.main/launch-nrepl)
-   (options-for-reply repl-options :attach attach)))
 
 (defn wrap-init-ns
   [init-ns]
@@ -113,10 +120,12 @@
         :expects #{"eval"}})
       (alter-var-root (constantly @wrap-init-ns)))))
 
-(defn repl-cfg [opts]
-  (as-> (apply hash-map opts) cfg
-        (merge default-cfg cfg)
-        (update-in cfg [:middlewares] conj (wrap-init-ns (:init-ns cfg)))))
+(defn repl-cfg
+  ([opts] (repl-cfg opts {}))
+  ([opts event]
+     (as-> (apply hash-map opts) cfg
+           (deep-merge default-cfg (get event ::config {}) cfg)
+           (update-in cfg [:middlewares] conj (wrap-init-ns (:init-ns cfg))))))
 
 (core/deftask repl
   "Start a repl session for the current project.
@@ -141,7 +150,7 @@ Subcommands:
   (core/with-pre-wrap
     (condp = cmd
       :connect  (client default-cfg (connect-string opts))
-      :headless (start-server (repl-cfg opts))
-      (let [cfg (repl-cfg args)]
+      :headless (start-server (repl-cfg opts core/*event*))
+      (let [cfg (repl-cfg args core/*event*)]
         (->> (start-server-in-thread cfg)
              (client cfg))))))
