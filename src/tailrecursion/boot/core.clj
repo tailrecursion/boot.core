@@ -22,7 +22,7 @@
    [java.net URLClassLoader URL]
    java.lang.management.ManagementFactory))
 
-(declare boot-env on-env! merge-env! outdirs out-files)
+(declare boot-env on-env! merge-env! out-files)
 
 ;; ## Utility Functions
 ;;
@@ -221,27 +221,39 @@
   [key & [name]]
   (tmp/mkdir! (tmpreg) key name))
 
+(def outdirs
+  "Atom containing a vector of File objects--directories created by `mkoutdir!`.
+  This atom is managed by boot and shouldn't be manipulated directly."
+  (atom []))
+
+(defn outdir?
+  "Returns `f` if it was created by `mkoutdir!`, otherwise nil."
+  [f]
+  (when (contains? (set @outdirs) f) f))
+
 (defn mkoutdir!
   "FIXME: document"
   [key & [name]]
   (with-let [f (mktmpdir! key name)]
+    (swap! outdirs conj f)
     (set-env! :src-paths #{(.getPath f)})
     (add-sync! (get-env :out-path) [(.getPath f)])))
+
+(defn mksrcdir!
+  "FIXME: document"
+  [key & [name]]
+  (with-let [f (mktmpdir! key name)]
+    (set-env! :src-paths #{(.getPath f)})))
 
 (defn unmk!
   "Delete the temp/out file or directory created with the given `key`."
   [key]
   (tmp/unmk! (tmpreg) key))
 
-(defn outdirs
-  "FIXME: document"
-  []
-  (->> :src-paths get-env (map io/file) (filter tmpfile?)))
-
 (defn out-files
   "FIXME: document"
   []
-  (->> (outdirs) (mapcat file-seq) (filter #(.isFile %))))
+  (->> @outdirs (mapcat file-seq) (filter #(.isFile %))))
 
 (defn deps
   "Returns (FIXME: what exactly does this return?)"
@@ -306,7 +318,7 @@
 (defn prep-build!
   "FIXME: document"
   [& args]
-  (doseq [f (outdirs)] (tmp/make-file! ::tmp/dir f))
+  (doseq [f @outdirs] (tmp/make-file! ::tmp/dir f))
   (apply make-event args))
 
 (defmacro boot
