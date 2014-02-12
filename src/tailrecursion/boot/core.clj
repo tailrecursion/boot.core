@@ -185,15 +185,19 @@
   (swap! src-filters conj filter))
 
 (defn sync!
-  "Trigger syncing of directories added via `add-sync!` now. This is used
-  internally by boot."
-  []
-  (let [outfiles (set (out-files))
-        consume  #(set/difference %1 (set (%2 %1)))
-        keepers  (reduce consume outfiles @src-filters)
-        deletes  (set/difference outfiles (set keepers))]
-    (doseq [f deletes] (.delete f))
-    (tmp/sync! (tmpreg))))
+  "When called with no arguments it triggers the syncing of directories added
+  via `add-sync!`. This is used internally by boot. When called with `dest` dir
+  and a number of `srcs` directories it syncs files from the src dirs to the
+  dest dir, overlaying them on top of each other."
+  ([]
+     (let [outfiles (set (out-files))
+           consume  #(set/difference %1 (set (%2 %1)))
+           keepers  (reduce consume outfiles @src-filters)
+           deletes  (set/difference outfiles (set keepers))]
+       (doseq [f deletes] (.delete f))
+       (tmp/sync! (tmpreg))))
+  ([dest & srcs]
+     (apply file/sync :time dest srcs)))
 
 (defn ignored?
   "Returns truthy if the file f is ignored in the user's gitignore config."
@@ -374,6 +378,16 @@
   "Returns a seq of files in :src-paths."
   []
   (->> :src-paths get-env (map io/file) (mapcat file-seq) (filter #(.isFile %))))
+
+(defn newer?
+  "FIXME: document"
+  [srcs & artifact-dirs]
+  (let [mod      #(.lastModified %)
+        file?    #(.isFile %)
+        smod     (->> srcs (filter file?) (map mod))
+        omod     (->> artifact-dirs (mapcat file-seq) (filter file?) (map mod))
+        missing? (not (and (seq smod) (seq omod)))]
+    (when (or missing? (< (apply min omod) (apply max smod))) srcs)))
 
 (defn relative-path
   "FIXME: document"
