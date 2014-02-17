@@ -167,8 +167,9 @@
 (defn add-sync!
   "Specify directories to sync after build event. The `dst` argument is the 
   destination directory. The `srcs` are an optional list of directories whose
-  contents will be copied into `dst`. The `add-sync!` function is associative,
-  for example:
+  contents will be copied into `dst`. The `add-sync!` function is associative.
+
+  Example:
 
     ;; These are equivalent:
     (add-sync! bar [baz baf])
@@ -180,7 +181,19 @@
 (def ^:private src-filters (atom []))
 
 (defn consume-src!
-  "FIXME: document"
+  "Tasks use this function to declare that they \"consume\" certain files. Files
+  in staging directories which are consumed by tasks will not be synced to the 
+  `:out-path` at the end of the build cycle. The `filter` argument is a function
+  which will be called with the seq of artifact `java.io.File` objects from the
+  task staging directories. It should return a seq of files to be comsumed.
+
+  Example:
+
+    ;; my task
+    (deftask foo []
+      ;; consume .cljs files
+      (consume-src! (partial by-ext [\".cljs\"]))
+      ...)"
   [filter]
   (swap! src-filters conj filter))
 
@@ -188,16 +201,21 @@
   "When called with no arguments it triggers the syncing of directories added
   via `add-sync!`. This is used internally by boot. When called with `dest` dir
   and a number of `srcs` directories it syncs files from the src dirs to the
-  dest dir, overlaying them on top of each other."
+  dest dir, overlaying them on top of each other.
+
+  When called with no arguments directories will be synced only if there are
+  artifacts in output directories to sync. If there are none `sync!` does
+  nothing."
   ([]
      (let [outfiles (set (out-files))
            consume  #(set/difference %1 (set (%2 %1)))
            keepers  (reduce consume outfiles @src-filters)
            deletes  (set/difference outfiles (set keepers))]
-       (doseq [f deletes] (.delete f))
-       (tmp/sync! (tmpreg))))
+       (when (seq keepers)
+         (doseq [f deletes] (.delete f))
+         (tmp/sync! (tmpreg)))))
   ([dest & srcs]
-     (apply file/sync :time dest srcs)))
+     (apply file/sync :hash dest srcs)))
 
 (defn ignored?
   "Returns truthy if the file f is ignored in the user's gitignore config."
@@ -236,7 +254,8 @@
   (when (contains? (set @outdirs) f) f))
 
 (defn mkoutdir!
-  "FIXME: document"
+  "Create a tempdir managed by boot into which tasks can emit artifacts. See
+  https://github.com/tailrecursion/boot#boot-managed-directories for more info."
   [key & [name]]
   (with-let [f (mktmpdir! key name)]
     (swap! outdirs conj f)
@@ -244,7 +263,10 @@
     (add-sync! (get-env :out-path) [(.getPath f)])))
 
 (defn mksrcdir!
-  "FIXME: document"
+  "Create a tmpdir managed by boot into which tasks can emit artifacts which
+  are constructed in order to be intermediate source files but not intended to
+  be synced to the project `:out-path`. See https://github.com/tailrecursion/boot#boot-managed-directories
+  for more info."
   [key & [name]]
   (with-let [f (mktmpdir! key name)]
     (set-env! :src-paths #{(.getPath f)})))
@@ -255,7 +277,8 @@
   (tmp/unmk! (tmpreg) key))
 
 (defn out-files
-  "FIXME: document"
+  "Returns a seq of `java.io.File` objects--the contents of directories created
+  by tasks via the `mkoutdir!` function above."
   []
   (->> @outdirs (mapcat file-seq) (filter #(.isFile %))))
 
@@ -380,7 +403,9 @@
   (->> :src-paths get-env (map io/file) (mapcat file-seq) (filter #(.isFile %))))
 
 (defn newer?
-  "FIXME: document"
+  "Given a seq of source file objects `srcs` and a number of `artifact-dirs`
+  directory file objects, returns truthy when any file in `srcs` is newer than
+  any file in any of the `artifact-dirs`."
   [srcs & artifact-dirs]
   (let [mod      #(.lastModified %)
         file?    #(.isFile %)
@@ -390,23 +415,29 @@
     (when (or missing? (< (apply min omod) (apply max smod))) srcs)))
 
 (defn relative-path
-  "FIXME: document"
+  "Get the path of a source file relative to the source directory it's in."
   [f]
   (->> (get-env :src-paths)
     (map #(.getPath (file/relative-to (io/file %) f)))
     (some #(and (not= f (io/file %)) (guard (io/as-relative-path %)) %))))
 
 (defn file-filter
-  "FIXME: Document this."
+  "A file filtering function factory. FIXME: more documenting here."
   [mkpred]
   (fn [criteria files & [negate?]]
     ((if negate? remove filter)
      #(some identity ((apply juxt (map mkpred criteria)) %)) files)))
 
 (def by-ext
-  "FIXME: Document this."
+  "This function takes two arguments: `exts` and `files`, where `exts` is a seq
+  of file extension strings like `[\".clj\" \".cljs\"]` and `files` is a seq of
+  file objects. Returns a seq of the files in `files` which have file extensions
+  listed in `exts`."
   (file-filter #(fn [f] (.endsWith (.getName f) %))))
 
 (def by-re
-  "FIXME: Document this."
+  "This function takes two arguments: `res` and `files`, where `res` is a seq
+  of regex patterns like `[#\"clj$\" #\"cljs$\"]` and `files` is a seq of
+  file objects. Returns a seq of the files in `files` whose names match one of
+  the regex patterns in `res`."
   (file-filter #(fn [f] (re-find % (.getName f)))))
