@@ -20,4 +20,4 @@ Distributed under the Eclipse Public License, the same as Clojure.
 [4]: https://github.com/technomancy/leiningen
 [5]: https://github.com/tailrecursion/boot/blob/master/boot.edn
 [6]: https://clojars.org/tailrecursion/boot.core
-[7]: https://clojars.org/tailrecursion/boot.core/latest-version.svg
+[7]: https://clojars.org/tailrecursion/boot.core/latest-version.svg?bustcache=1
