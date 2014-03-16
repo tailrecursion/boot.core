@@ -8,10 +8,10 @@
 
 (ns tailrecursion.boot.file
   (:require
-    [digest           :as d]
-    [clojure.data     :as data]
-    [clojure.java.io  :refer [copy file delete-file make-parents]]
-    [clojure.set      :refer [union intersection difference]])
+    [tailrecursion.boot.digest :as d]
+    [clojure.data              :as data]
+    [clojure.java.io           :refer [copy file delete-file make-parents]]
+    [clojure.set               :refer [union intersection difference]])
   (:import
     java.lang.management.ManagementFactory)
   (:refer-clojure :exclude [sync name file-seq]))

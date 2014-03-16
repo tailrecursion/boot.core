@@ -12,7 +12,7 @@
    [clojure.java.io                 :as io]
    [clojure.pprint                  :as pprint]
    [clojure.stacktrace              :as trace]
-   [tailrecursion.warp              :as !]
+   [tailrecursion.boot.warp         :as !]
    [tailrecursion.boot.core         :as core]
    [tailrecursion.boot.core.task    :as task]
    [tailrecursion.boot.file         :as file]

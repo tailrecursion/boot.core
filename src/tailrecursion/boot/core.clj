@@ -10,11 +10,9 @@
 (ns tailrecursion.boot.core
   "The boot core API."
   (:require
-   [cemerick.pomegranate           :as pom]
    [clojure.java.io                :as io]
    [clojure.set                    :as set]
    [clojure.walk                   :as walk]
-   [tailrecursion.boot.deps        :as deps]
    [tailrecursion.boot.file        :as file]
    [tailrecursion.boot.gitignore   :as git]
    [tailrecursion.boot.tmpregistry :as tmp])
@@ -22,7 +20,7 @@
    [java.net URLClassLoader URL]
    java.lang.management.ManagementFactory))
 
-(declare boot-env on-env! merge-env! out-files)
+(declare get-env set-env! boot-env on-env! merge-env! out-files)
 
 ;; ## Utility Functions
 ;;
@@ -33,14 +31,21 @@
   []
   (get-in @boot-env [:system :tmpregistry]))
 
+(defn- get-deps []
+  (require 'tailrecursion.boot.deps)
+  (resolve 'tailrecursion.boot.deps/deps))
+
 (defn- add-dependencies!
   "Add Maven dependencies to the classpath, fetching them if necessary."
-  [deps repos]
+  [old new env]
   (require 'tailrecursion.boot.loader)
-  ((resolve 'tailrecursion.boot.loader/add-dependencies!) deps repos))
+  (let [deps (resolve 'tailrecursion.boot.loader/dependencies)
+        add! (resolve 'tailrecursion.boot.loader/add-dependencies!)]
+    (add! new (:repositories env))
+    (if deps @@deps (into (or old []) new))))
 
 (defn- add-directories!
-  "Add directories to the classpath."
+  "Add URLs (directories or JAR files) to the classpath."
   [dirs]
   (when (seq dirs)
     (let [meth  (doto (.getDeclaredMethod URLClassLoader "addURL" (into-array Class [URL]))
@@ -126,12 +131,11 @@
 (defmulti on-env!
   "Event handler called when the boot atom is modified. This handler is for
   performing side-effects associated with maintaining the application state in
-  the boot atom. For example, when `:dependencies` is modified the handler
-  fetches dependency JARs from Maven and adds them to the classpath."
+  the boot atom. For example, when `:src-paths` is modified the handler adds
+  the new directories to the classpath."
   (fn [key old-value new-value env] key) :default ::default)
 
 (defmethod on-env! ::default     [key old new env] nil)
-(defmethod on-env! :dependencies [key old new env] (add-dependencies! new (:repositories env)))
 (defmethod on-env! :src-paths    [key old new env] (add-directories! (set/difference new old)))
 
 (defmulti merge-env!
@@ -142,9 +146,9 @@
 
 (defmethod merge-env! ::default      [key old new env] new)
 (defmethod merge-env! :repositories  [key old new env] (into (or old #{}) new))
-(defmethod merge-env! :dependencies  [key old new env] (into (or old  []) new))
 (defmethod merge-env! :src-static    [key old new env] (into (or old #{}) new))
 (defmethod merge-env! :src-paths     [key old new env] (into (or old #{}) new))
+(defmethod merge-env! :dependencies  [key old new env] (add-dependencies! old new env))
 
 ;; ## Boot API Functions
 ;;
@@ -285,7 +289,7 @@
 (defn deps
   "Returns (FIXME: what exactly does this return?)"
   []
-  (deps/deps boot-env))
+  ((get-deps) boot-env))
 
 (defmacro deftask
   "Define a new task. Task definitions may contain nested task definitions.

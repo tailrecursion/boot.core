@@ -8,12 +8,11 @@
 
 (ns tailrecursion.boot.core.task
   (:require
-   [me.raynes.conch.low-level      :as sh]
    [clojure.java.io                :as io]
    [clojure.set                    :as set]
    [clojure.pprint                 :as pprint]
    [clojure.string                 :as string]
-   [tailrecursion.warp             :as !]
+   [tailrecursion.boot.warp        :as !]
    [tailrecursion.boot.core        :as core]
    [tailrecursion.boot.file        :as file]
    [tailrecursion.boot.table.core  :as table]))
@@ -61,11 +60,17 @@
 
 (def ^:private ^:dynamic *sh-dir* nil)
 
-(defn- sh [& args]
-  (let [opts (into [:redirect-err true] (when *sh-dir* [:dir *sh-dir*]))
-        proc (apply sh/proc (concat args opts))]
-    (future (sh/stream-to-out proc :out))
-    #(.waitFor (:process proc))))
+(let [conch-loaded? (atom false)]
+  (defn- sh [& args]
+    (when (compare-and-set! conch-loaded? false true)
+      (core/set-env! :dependencies '[[me.raynes/conch "0.5.0"]]))
+    (require 'me.raynes.conch.low-level)
+    (let [conch-proc (resolve 'me.raynes.conch.low-level/proc)
+          conch-out  (resolve 'me.raynes.conch.low-level/stream-to-out)
+          opts       (into [:redirect-err true] (when *sh-dir* [:dir *sh-dir*]))
+          proc       (apply conch-proc (concat args opts))]
+      (future (conch-out proc :out))
+      #(.waitFor (:process proc)))))
 
 (defn- pp-str [form]
   (with-out-str (pprint/pprint form)))
@@ -273,6 +278,7 @@
 
   The optional `sym` argument specifies the namespace to be in."
   [& [sym]]
+  (core/set-env! :dependencies '[[reply "0.2.0"]])
   (core/with-pre-wrap
     (require 'reply.main)
     ; resolve at runtime: reply takes like 4s to load via :require in ns decl

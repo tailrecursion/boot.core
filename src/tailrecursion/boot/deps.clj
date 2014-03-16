@@ -11,8 +11,8 @@
     [java.util.jar JarFile]
     [java.util.zip ZipFile])
   (:require
-    [tailrecursion.boot.kahnsort :refer [topo-sort]]
-    [cemerick.pomegranate.aether :refer [resolve-dependencies]]))
+   [clojure.java.io             :as io]
+   [tailrecursion.boot.kahnsort :as kahn]))
 
 (defn entries [jar]
   (->> (.entries jar)
@@ -20,11 +20,19 @@
     (map #(vector (.getName %) (.getInputStream jar %)))
     (into {})))
 
+(defn ^:deprecated resolve-deps* [coords repos]
+  (require 'cemerick.pomegranate.aether)
+  (let [resolve-dependencies (resolve 'cemerick.pomegranate.aether/resolve-dependencies)]
+    (->> (resolve-dependencies :coordinates coords :repositories (zipmap repos repos))
+      (kahn/topo-sort)
+      (map (fn [x] {:dep x :jar (.getPath (:file (meta x)))})))))
+
 (defn deps [env]
-  (let [{repos :repositories coords :dependencies} @env]
-    (->> (resolve-dependencies :repositories (zipmap repos repos) :coordinates coords)
-      (topo-sort)
-      (map #(:file (meta %)))
-      (filter #(.endsWith (.getPath %) ".jar"))
-      (map #(JarFile. %))
+  (require 'tailrecursion.boot.loader)
+  (let [resolve-deps! (resolve 'tailrecursion.boot.loader/resolve-dependencies!)
+        {repos :repositories coords :dependencies} @env]
+    (->> ((or resolve-deps! resolve-deps*) coords repos)
+      (map :jar)
+      (filter #(.endsWith % ".jar"))
+      (map #(JarFile. (io/file %)))
       (map #(vector (.getName %) (entries %))))))

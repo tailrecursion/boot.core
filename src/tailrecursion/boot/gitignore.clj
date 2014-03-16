@@ -11,9 +11,7 @@
   (:require
     [clojure.java.shell :refer [sh]]
     [clojure.java.io    :refer [file]]
-    [clojure.string     :refer [blank? join split replace trim]])
-  (:import
-    [org.springframework.util AntPathMatcher]))
+    [clojure.string     :refer [blank? join split replace trim]]))
 
 (defprotocol IMatcher
   (-negated? [this] "Is this pattern negated?")
@@ -28,13 +26,23 @@
   (loop [match? nil, [matcher & more-matchers] matchers]
     (if-not matcher
       match?
-      (let [m?  (-matches? matcher f)
-            n?  (-negated? matcher)] 
+      (let [m? (-matches? matcher f)
+            n? (-negated? matcher)] 
         (recur (if (not m?) match? (not n?)) more-matchers)))))
 
+(let [match-fn (atom ::none)]
+  (defn get-matcher []
+    (require 'tailrecursion.boot.core)
+    (require 'tailrecursion.boot.loader)
+    (compare-and-set! match-fn ::none
+      (or (resolve 'tailrecursion.boot.loader/glob-match?)
+        (eval '(do ((resolve 'tailrecursion.boot.core/set-env!)
+                    :dependencies '[[org.springframework/spring-core "1.2.2"]])
+                   #(.match (org.springframework.util.AntPathMatcher.) %1 %2)))))
+    @match-fn))
+
 (defn path-matcher [pattern & [negated?]]
-  (let [m (AntPathMatcher.)]
-    (Matcher. negated? (fn [f] (.match m pattern (.toString (.getCanonicalFile f)))))))
+  (Matcher. negated? (fn [f] ((get-matcher) pattern (.toString (.getCanonicalFile f))))))
 
 (defn parse-gitignore1 [pattern base]
   (let [base    (if (.endsWith base "/") base (str base "/"))
