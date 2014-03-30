@@ -194,17 +194,19 @@
 (core/deftask lein
   "Run a leiningen task with a generated `project.clj`.
 
-  This task creates a temporary `project.clj` file based on the boot environment
-  configuration, including project name and version (generated if not present),
-  dependencies, and source paths. Additional keys may be added to the generated
-  `project.clj` file by specifying a `:lein` key in the boot environment whose
-  value is a map of keys-value pairs to add to `project.clj`.
+  This task generates a leiningen `project.clj` file based on the boot
+  environment configuration, including project name and version (generated
+  if not present), dependencies, and source paths. Additional keys may be added
+  to the generated `project.clj` file by specifying a `:lein` key in the boot
+  environment whose value is a map of keys-value pairs to add to `project.clj`.
 
-  Note that leiningen is run in another process. This task cannot be used to run
-  interactive lein tasks (yet) because stdin is not currently piped to leiningen."
+  Once the `project.clj` file has been generated, the specified lein task is
+  then run. Note that leiningen is run in another process. This task cannot be
+  used to run interactive lein tasks (yet) because stdin is not currently piped
+  to leiningen."
   [& args]
   (core/with-pre-wrap
-    (generate-lein-project-file! :keep-project false)
+    (generate-lein-project-file! :keep-project true)
     ((apply sh "lein" (map str args)))))
 
 (defn auto
