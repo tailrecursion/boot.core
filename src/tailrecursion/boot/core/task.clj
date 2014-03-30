@@ -162,6 +162,35 @@
         ((binding [*sh-dir* pdir] (sh "make" "boot")))
         (io/copy (io/file pdir "boot") (io/file (or outfile "boot")))))))
 
+(defn- generate-lein-project-file!
+  [{:keys [keep-project] :or {:keep-project true}}]
+  (let [pfile (io/file "project.clj")
+        pname (or (core/get-env :project) 'boot-project)
+        pvers (or (core/get-env :version) "0.1.0-SNAPSHOT")
+        prop  #(when-let [x (core/get-env %2)] [%1 x])
+        head  (list* 'defproject pname pvers
+                     (concat
+                      (prop :url :url)
+                      (prop :license :license)
+                      (prop :description :description)
+                      [:dependencies (core/get-env :dependencies)
+                       :source-paths (vec (core/get-env :src-paths))]))
+        proj  (pp-str (concat head (mapcat identity (core/get-env :lein))))]
+    (if-not keep-project (.deleteOnExit pfile))
+    (spit pfile proj)))
+
+(core/deftask lein-generate
+  "Generate a leiningen `project.clj` file.
+
+  This task generates a leiningen `project.clj` file based on the boot
+  environment configuration, including project name and version (generated
+  if not present), dependencies, and source paths. Additional keys may be added
+  to the generated `project.clj` file by specifying a `:lein` key in the boot
+  environment whose value is a map of keys-value pairs to add to `project.clj`."
+  []
+  (core/with-pre-wrap
+    (generate-lein-project-file! true)))
+
 (core/deftask lein
   "Run a leiningen task with a generated `project.clj`.
 
@@ -175,23 +204,8 @@
   interactive lein tasks (yet) because stdin is not currently piped to leiningen."
   [& args]
   (core/with-pre-wrap
-    (let [pfile (io/file "project.clj")
-          pname (or (core/get-env :project) 'boot-project)
-          pvers (or (core/get-env :version) "0.1.0-SNAPSHOT")
-          prop  #(when-let [x (core/get-env %2)] [%1 x])
-          head  (list* 'defproject pname pvers
-                  (concat
-                    (prop :url :url)
-                    (prop :license :license)
-                    (prop :description :description)
-                    [:dependencies (core/get-env :dependencies)
-                     :source-paths (vec (core/get-env :src-paths))]))]
-      (if (.exists pfile)
-        (println "Warning: A project.clj file already exists. Using that one.")
-        (doto pfile
-          (.deleteOnExit)
-          (spit (pp-str (concat head (mapcat identity (core/get-env :lein)))))))
-      ((apply sh "lein" (map str args))))))
+    (generate-lein-project-file! false)
+    ((apply sh "lein" (map str args)))))
 
 (defn auto
   "Run every `msec` (default 200) milliseconds."
