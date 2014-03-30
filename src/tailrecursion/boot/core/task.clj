@@ -163,7 +163,7 @@
         (io/copy (io/file pdir "boot") (io/file (or outfile "boot")))))))
 
 (defn- generate-lein-project-file!
-  [{:keys [keep-project] :or {:keep-project true}}]
+  [& {:keys [keep-project] :or {:keep-project true}}]
   (let [pfile (io/file "project.clj")
         pname (or (core/get-env :project) 'boot-project)
         pvers (or (core/get-env :version) "0.1.0-SNAPSHOT")
@@ -189,7 +189,7 @@
   environment whose value is a map of keys-value pairs to add to `project.clj`."
   []
   (core/with-pre-wrap
-    (generate-lein-project-file! true)))
+    (generate-lein-project-file! :keep-project true)))
 
 (core/deftask lein
   "Run a leiningen task with a generated `project.clj`.
@@ -204,7 +204,7 @@
   interactive lein tasks (yet) because stdin is not currently piped to leiningen."
   [& args]
   (core/with-pre-wrap
-    (generate-lein-project-file! false)
+    (generate-lein-project-file! :keep-project false)
     ((apply sh "lein" (map str args)))))
 
 (defn auto
