@@ -23,9 +23,9 @@
 (defn ^:deprecated resolve-deps* [coords repos]
   (require 'cemerick.pomegranate.aether)
   (let [resolve-dependencies (resolve 'cemerick.pomegranate.aether/resolve-dependencies)]
-    (->> (resolve-dependencies :coordinates coords :repositories (zipmap repos repos))
-      (kahn/topo-sort)
-      (map (fn [x] {:dep x :jar (.getPath (:file (meta x)))})))))
+    (->> (resolve-dependencies :coordinates coords :repositories repos)
+         (kahn/topo-sort)
+         (map (fn [x] {:dep x :jar (.getPath (:file (meta x)))})))))
 
 (defn deps [env]
   (require 'tailrecursion.boot.loader)
