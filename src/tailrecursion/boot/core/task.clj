@@ -224,7 +224,7 @@
       (recur (core/make-event event)))))
 
 (defn files-changed?
-  [& [type]]
+  [& [type quiet?]]
   (let [dirs      (remove core/tmpfile? (core/get-env :src-paths)) 
         watchers  (map file/make-watcher dirs)
         since     (atom 0)]
@@ -237,9 +237,13 @@
                       (clean :hash))]
           (if-let [mods (->> (or type :time) (get info) seq)]
             (do
-              (let [path  (file/path (first mods))
-                    ok    "\033[34m↳ Elapsed time: %6.3f sec ›\033[33m 00:00:00 \033[0m"
-                    fail  "\n\033[31m%s\033[0m\n\033[34m↳ Elapsed time: %6.3f sec ›\033[33m 00:00:00 \033[0m"]
+              (let [path   (file/path (first mods))
+                    ok-v   "\033[34m↳ Elapsed time: %6.3f sec ›\033[33m 00:00:00 \033[0m"
+                    ok-q   "Elapsed time: %6.3f sec\n"
+                    fail-v "\n\033[31m%s\033[0m\n\033[34m↳ Elapsed time: %6.3f sec ›\033[33m 00:00:00 \033[0m"
+                    fail-q "\n%s\nElapsed time: %6.3f sec\n"
+                    ok     (if quiet? ok-q ok-v)
+                    fail   (if quiet? fail-q fail-v)]
                 (when (not= 0 @since) (println)) 
                 (reset! since (:time event))
                 (print-time ok fail (continue (assoc event :watch info)))))
@@ -249,16 +253,19 @@
                   m     (mod (long (/ diff 60)) 60)
                   h     (mod (long (/ diff 3600)) 24)]
               (core/sync!)
-              (printf "\033[33m%s%02d:%02d:%02d \033[0m" pad h m s))))))))
+              (when-not quiet? (printf "\033[33m%s%02d:%02d:%02d \033[0m" pad h m s)))))))))
 
 (core/deftask watch
   "Watch `:src-paths` and call its continuation when files change.
 
-  The `:type`option specifies how changes to files are detected and can be
-  either `:time`or `:hash` (default `:time`). The `:msec` option specifies the 
-  polling interval in milliseconds (default 200)."
-  [& {:keys [type msec] :or {type :time msec 200}}]
-  (comp (auto msec) (files-changed? type)))
+  Options:
+
+    :type    Specifies how changes to files are detected and can be either 
+             :time or :hash (default :time).
+    :msec    Specifies the polling interval in milliseconds (default 200).
+    :quiet   When set to true no ANSI colors or updating timer are printed. "
+  [& {:keys [type msec quiet] :or {type :time msec 200 quiet false}}]
+  (comp (auto msec) (files-changed? type quiet)))
 
 (core/deftask syncdir
   "Copy/sync files between directories.
