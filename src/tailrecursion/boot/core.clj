@@ -42,7 +42,7 @@
   (let [deps (resolve 'tailrecursion.boot.loader/dependencies)
         add! (resolve 'tailrecursion.boot.loader/add-dependencies!)]
     (add! new (:repositories env))
-    (if deps @@deps (into (or old []) new))))
+    (into (or old []) new)))
 
 (defn- add-directories!
   "Add URLs (directories or JAR files) to the classpath."

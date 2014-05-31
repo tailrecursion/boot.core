@@ -27,11 +27,21 @@
       (kahn/topo-sort)
       (map (fn [x] {:dep x :jar (.getPath (:file (meta x)))})))))
 
+(defn resolve-deps! []
+  (require 'tailrecursion.boot.loader)
+  (require 'tailrecursion.boot.classlojure.core)
+  (when-let [get-loader (resolve 'tailrecursion.boot.loader/get-classloader)]
+    (let [eval-in (resolve 'tailrecursion.boot.classlojure.core/eval-in)]
+      (fn [coords repos]
+        (eval-in (get-loader)
+          `(do (require 'tailrecursion.boot-classloader)
+               (->> (tailrecursion.boot-classloader/resolve-dependencies!* '~coords '~repos)
+                 (map (comp (fn [~'x] {:dep ~'x :jar (.getPath (:file (meta ~'x)))}) first)))))))))
+
 (defn deps [env]
   (require 'tailrecursion.boot.loader)
-  (let [resolve-deps! (resolve 'tailrecursion.boot.loader/resolve-dependencies!)
-        {repos :repositories coords :dependencies} @env]
-    (->> ((or resolve-deps! resolve-deps*) coords repos)
+  (let [{repos :repositories coords :dependencies} @env]
+    (->> ((or (resolve-deps!) resolve-deps*) coords repos)
       (map :jar)
       (filter #(.endsWith % ".jar"))
       (map #(JarFile. (io/file %)))
