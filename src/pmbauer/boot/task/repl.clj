@@ -3,8 +3,6 @@
   (:require [clojure.set]
             [clojure.string :as s]
             [clojure.java.io :as io]
-            [clojure.tools.nrepl.ack :as nrepl.ack]
-            [clojure.tools.nrepl.server :as nrepl.server]
             [tailrecursion.boot.core :as core]))
 
 (def default-cfg
@@ -27,9 +25,10 @@
 (def ^:private nrepl-port-file (io/file ".nrepl-port"))
 
 (def ^:private ack-server
-  (delay (nrepl.server/start-server
+  (delay ((resolve 'clojure.tools.nrepl.server/start-server)
           :bind (:host default-cfg)
-          :handler (nrepl.ack/handle-ack nrepl.server/unknown-op))))
+          :handler ((resolve 'clojure.tools.nrepl.ack/handle-ack)
+                    (resolve 'clojure.tools.nrepl.server/unknown-op)))))
 
 (defn ^:private nrepl-started-msg
   [host port]
@@ -41,10 +40,10 @@
     :keys [host middlewares ack-port]}]
   (let [headless? (nil? ack-port)
         cfg (-> (clojure.set/rename-keys cfg {:host :bind})
-                (assoc :handler (apply nrepl.server/default-handler middlewares))
+                (assoc :handler (apply (resolve 'clojure.tools.nrepl.server/default-handler) middlewares))
                 (select-keys [:bind :port :handler :ack-port]))
         {:as server :keys [port]} (->> (apply concat cfg)
-                                       (apply nrepl.server/start-server))]
+                                       (apply (resolve 'clojure.tools.nrepl.server/start-server)))]
     (when headless?
       (println (nrepl-started-msg host port)))
     (spit (doto nrepl-port-file .deleteOnExit) port)
@@ -53,13 +52,13 @@
 (defn ^:private start-server-in-thread
   [{:as cfg
     :keys [host timeout]}]
-  (nrepl.ack/reset-ack-port!)
+  ((resolve 'clojure.tools.nrepl.ack/reset-ack-port!))
   (let [ack-port (:port @ack-server)]
     (-> (bound-fn []
           (start-server (assoc cfg :ack-port ack-port)))
         (Thread.)
         (.start)))
-  (if-let [repl-port (nrepl.ack/wait-for-ack timeout)]
+  (if-let [repl-port ((resolve 'clojure.tools.nrepl.ack/wait-for-ack) timeout)]
     (do (println (nrepl-started-msg host repl-port))
         repl-port)
     (throw (ex-info "REPL server launch timed out." {}))))
@@ -101,7 +100,7 @@
 (defn wrap-init-ns
   [init-ns]
   (with-local-vars
-      [wrap-init-ns
+      [wrap-init-ns'
        (fn [h]
          ;; this needs to be a var, since it's in the nREPL session
          (with-local-vars [init-ns-sentinel nil]
@@ -110,15 +109,15 @@
                (swap! session assoc
                       (var *ns*)
                       (try (require init-ns) (create-ns init-ns)
-                           (catch Throwable t# (create-ns 'user)))
+                           (catch Throwable t (create-ns 'user)))
                       init-ns-sentinel true))
              (h msg))))]
-    (doto wrap-init-ns
+    (doto wrap-init-ns'
       ;; set-descriptor! currently nREPL only accepts a var
-      (clojure.tools.nrepl.middleware/set-descriptor!
-       {:requires #{(var clojure.tools.nrepl.middleware.session/session)}
+      ((resolve 'clojure.tools.nrepl.middleware/set-descriptor!)
+       {:requires #{(resolve 'clojure.tools.nrepl.middleware.session/session)}
         :expects #{"eval"}})
-      (alter-var-root (constantly @wrap-init-ns)))))
+      (alter-var-root (constantly @wrap-init-ns')))))
 
 (defn repl-cfg
   ([opts] (repl-cfg opts {}))
@@ -147,6 +146,10 @@ Subcommands:
   If no dest is given, resolves the host as described above
   and the port from .nrepl-port in the project root."
   [& [cmd & opts :as args]]
+  (core/set-env! :dependencies '[[reply "0.3.0"]
+                                 [org.clojure/tools.nrepl "0.2.3"]])
+  (require 'clojure.tools.nrepl.ack)
+  (require 'clojure.tools.nrepl.server)
   (core/with-pre-wrap
     (condp = cmd
       :connect  (client default-cfg (connect-string opts))
