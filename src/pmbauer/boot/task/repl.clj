@@ -126,6 +126,10 @@
            (deep-merge default-cfg (get event ::config {}) cfg)
            (update-in cfg [:middlewares] conj (wrap-init-ns (:init-ns cfg))))))
 
+(defn headless
+  [opts]
+  (start-server (repl-cfg opts core/*event*)))
+
 (core/deftask repl
   "Start a repl session for the current project.
 
@@ -136,6 +140,9 @@ Subcommands:
 :headless [:host host] [:port port] [:middlewares []]
   This will launch an nREPL server and wait, rather than connecting
   a client to it.
+
+:pass-through [:host host] [:port port] [:middlewares []]
+  Like :headless, but does not block the task chain.
 
 :connect [dest]
   Connects to an already running nREPL server. Dest can be:
@@ -153,7 +160,8 @@ Subcommands:
   (core/with-pre-wrap
     (condp = cmd
       :connect  (client default-cfg (connect-string opts))
-      :headless (start-server (repl-cfg opts core/*event*))
+      :headless (headless opts)
+      :pass-through (future (headless opts))
       (let [cfg (repl-cfg args core/*event*)]
         (->> (start-server-in-thread cfg)
              (client cfg))))))
