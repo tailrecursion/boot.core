@@ -1,7 +1,7 @@
 (ns pmbauer.boot.task.repl
   "Start a repl session with the current project."
-  (:require [clojure.set]
-            [clojure.string :as s]
+  (:require [clojure.set :as set]
+            [clojure.string :as string]
             [clojure.java.io :as io]
             [tailrecursion.boot.core :as core]))
 
@@ -39,7 +39,7 @@
   [{:as cfg
     :keys [host middlewares ack-port]}]
   (let [headless? (nil? ack-port)
-        cfg (-> (clojure.set/rename-keys cfg {:host :bind})
+        cfg (-> (set/rename-keys cfg {:host :bind})
                 (assoc :handler (apply (resolve 'clojure.tools.nrepl.server/default-handler) middlewares))
                 (select-keys [:bind :port :handler :ack-port]))
         {:as server :keys [port]} (->> (apply concat cfg)
@@ -70,8 +70,8 @@
         (merge opts (cond attach {:attach (str attach)}
                           port {:port port}
                           :else {}))
-        (clojure.set/rename-keys opts {:prompt :custom-prompt
-                                       :welcome :custom-help})
+        (set/rename-keys opts {:prompt :custom-prompt
+                               :welcome :custom-help})
         (if (:port opts) (update-in opts [:port] str) opts)))
 
 (defn ^:private client
@@ -86,13 +86,13 @@
 (defn ^:private connect-string
   [opts]
   (as-> (str (first opts)) x
-        (s/split x #":")
-        (remove s/blank? x)
+        (string/split x #":")
+        (remove string/blank? x)
         (-> (drop-last (count x) [(:host default-cfg)
                                   (try (slurp nrepl-port-file)
                                        (catch Exception _ ""))])
             (concat x))
-        (s/join ":" x)
+        (string/join ":" x)
         (if (re-find #":\d+($|/.*$)" x)
           x
           (throw (ex-info "Port is required" {:connect-string x})))))
