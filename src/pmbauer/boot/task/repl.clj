@@ -1,5 +1,5 @@
 (ns pmbauer.boot.task.repl
-  "Start a repl session either with the current project or standalone."
+  "Start a repl session with the current project."
   (:require [clojure.set]
             [clojure.string :as s]
             [clojure.java.io :as io]
