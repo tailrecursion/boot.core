@@ -76,10 +76,6 @@
 
 (defn ^:private client
   [{:keys [repl-options]} attach]
-  (require 'reply.main)
-  (when (and (string? attach) (.startsWith attach "http:"))
-    ;; todo: should we dynamically add dep to project here?
-    (require 'cemerick.drawbridge.client))
   ((resolve 'reply.main/launch-nrepl)
    (options-for-reply repl-options :attach attach)))
 
@@ -130,6 +126,17 @@
   [opts]
   (start-server (repl-cfg opts core/*event*)))
 
+(def ^:private client-mode? (complement #{:headless :pass-through}))
+
+(defn ^:private load-dynamic-dependencies
+  [[cmd & opts :as args]]
+  (core/set-env! :dependencies '[[org.clojure/tools.nrepl "0.2.3"]])
+  (require 'clojure.tools.nrepl.ack)
+  (require 'clojure.tools.nrepl.server)
+  (when (client-mode? cmd)
+    (core/set-env! :dependencies '[[reply "0.3.0"]])
+    (require 'reply.main)))
+
 (core/deftask repl
   "Start a repl session for the current project.
 
@@ -146,17 +153,13 @@ Subcommands:
 
 :connect [dest]
   Connects to an already running nREPL server. Dest can be:
-  - an HTTP URL -- connects to an HTTP nREPL endpoint;
   - host:port -- connects to the specified host and port;
   - port -- host defaults to localhost
 
   If no dest is given, resolves the host as described above
   and the port from .nrepl-port in the project root."
   [& [cmd & opts :as args]]
-  (core/set-env! :dependencies '[[reply "0.3.0"]
-                                 [org.clojure/tools.nrepl "0.2.3"]])
-  (require 'clojure.tools.nrepl.ack)
-  (require 'clojure.tools.nrepl.server)
+  (load-dynamic-dependencies args)
   (core/with-pre-wrap
     (condp = cmd
       :connect  (client default-cfg (connect-string opts))
