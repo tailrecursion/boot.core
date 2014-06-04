@@ -1,4 +1,4 @@
-(defproject tailrecursion/boot.core "2.4.0"
+(defproject tailrecursion/boot.core "2.4.1"
   :description  "A script interpreter for Clojure. Also a build tool."
   :url          "https://github.com/tailrecursion/boot.core"
   :license      {:name  "Eclipse Public License"
