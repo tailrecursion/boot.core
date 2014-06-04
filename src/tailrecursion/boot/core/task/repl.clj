@@ -1,4 +1,4 @@
-(ns pmbauer.boot.task.repl
+(ns tailrecursion.boot.core.task.repl
   "Start a repl session with the current project."
   (:require [clojure.set :as set]
             [clojure.string :as string]
