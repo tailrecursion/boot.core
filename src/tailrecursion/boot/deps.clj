@@ -27,16 +27,45 @@
       (kahn/topo-sort)
       (map (fn [x] {:dep x :jar (.getPath (:file (meta x)))})))))
 
-(defn resolve-deps! []
+(def ^:private memoized-resolve-deps! (atom nil))
+
+(defn resolve-deps!
+  "FIXME: look at this function. just look at it."
+  []
   (require 'tailrecursion.boot.loader)
   (require 'tailrecursion.boot.classlojure.core)
   (when-let [get-loader (resolve 'tailrecursion.boot.loader/get-classloader)]
-    (let [eval-in (resolve 'tailrecursion.boot.classlojure.core/eval-in)]
-      (fn [coords repos]
-        (eval-in (get-loader)
-          `(do (require 'tailrecursion.boot-classloader)
-               (->> (tailrecursion.boot-classloader/resolve-dependencies!* '~coords '~repos)
-                 (map (comp (fn [~'x] {:dep ~'x :jar (.getPath (:file (meta ~'x)))}) first)))))))))
+    (compare-and-set! memoized-resolve-deps! nil
+      (let [eval-in (resolve 'tailrecursion.boot.classlojure.core/eval-in)]
+        (memoize
+          (fn [coords repos]
+            (eval-in (get-loader)
+              `(do (require
+                     '[clojure.set                    :as ~'x-set]
+                     '[cemerick.pomegranate.aether    :as ~'x-aether]
+                     '[tailrecursion.boot-classloader :as ~'x-loader])
+                   (let [res#  (fn [x#] (x-aether/resolve-dependencies
+                                          :coordinates  x#
+                                          :repositories (zipmap '~repos '~repos)))
+                         sort# (partial group-by (comp zero? count second))
+                         proc# (fn [x#] (->> x# (map (juxt ffirst (comp set (partial map first) second)))))
+                         derp# (fn [x#] (->> x# first vector res#
+                                          (filter (comp (partial = (ffirst x#)) ffirst))
+                                          first second))
+                         diff# (fn [x# y#] (x-set/difference y# x#))
+                         d#    (res# '~coords)
+                         deps# (->> d# (reduce (fn [xs# x#] (assoc xs# (ffirst x#) (first x#))) {}))
+                         dd#   (->> d# (map (juxt first derp#)) proc# sort#)
+                         dd#   (loop [sorted# (dd# true) unsorted# (dd# false)]
+                                 (if-not (seq unsorted#)
+                                   (map first sorted#)
+                                   (let [set# (set (map first sorted#))
+                                         ddd# (->> unsorted#
+                                                (map (juxt first (comp (partial diff# set#) second)))
+                                                sort#)]
+                                     (recur (into sorted# (ddd# true)) (ddd# false)))))]
+                     (->> dd# (map (fn [x#] {:dep (deps# x#) :jar (.getPath (:file (meta (deps# x#))))}))))))))))
+    @memoized-resolve-deps!))
 
 (defn deps [env]
   (require 'tailrecursion.boot.loader)
