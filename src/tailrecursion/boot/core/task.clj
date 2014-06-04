@@ -8,14 +8,15 @@
 
 (ns tailrecursion.boot.core.task
   (:require
-   [clojure.java.io                :as io]
-   [clojure.set                    :as set]
-   [clojure.pprint                 :as pprint]
-   [clojure.string                 :as string]
-   [tailrecursion.boot.warp        :as !]
-   [tailrecursion.boot.core        :as core]
-   [tailrecursion.boot.file        :as file]
-   [tailrecursion.boot.table.core  :as table]))
+   [clojure.java.io                   :as io]
+   [clojure.set                       :as set]
+   [clojure.pprint                    :as pprint]
+   [clojure.string                    :as string]
+   [tailrecursion.boot.warp           :as !]
+   [tailrecursion.boot.core           :as core]
+   [tailrecursion.boot.core.task.repl :as repl]
+   [tailrecursion.boot.file           :as file]
+   [tailrecursion.boot.table.core     :as table]))
 
 (defn- first-line [s] (when s (first (string/split s #"\n"))))
 (defn- not-blank? [s] (when-not (string/blank? s) s))
@@ -276,19 +277,29 @@
   (core/add-sync! to-dir from-dirs)
   identity)
 
-(defn- custom-eval [sym]
-  `(do (when (try (require '~sym) ::ok (catch Throwable _#)) (in-ns '~sym))))
-
-
 (core/deftask repl
-  "Launch nrepl in the project.
+  "Start a repl session for the current project.
 
-  The optional `sym` argument specifies the namespace to be in."
-  [& [sym]]
-  (core/set-env! :dependencies '[[reply "0.2.0"]])
-  (core/with-pre-wrap
-    (require 'reply.main)
-    ; resolve at runtime: reply takes like 4s to load via :require in ns decl
-    (let [launch (resolve 'reply.main/launch-nrepl)]
-      (assert launch "Can't resolve 'reply.main/launch-nrepl")
-      (launch {:custom-eval (custom-eval (or sym 'tailrecursion.boot.user))}))))
+Subcommands:
+
+<none> | [:host \"127.0.0.1\"] [:port random] [:middlewares []] [:init-ns 'user]
+
+:headless [:host host] [:port port] [:middlewares []]
+  This will launch an nREPL server and wait, rather than connecting
+  a client to it.
+
+:pass-through [:host host] [:port port] [:middlewares []]
+  Like :headless, but does not block the task chain.
+
+:connect [dest]
+  Connects to an already running nREPL server. Dest can be:
+  - host:port -- connects to the specified host and port;
+  - port -- host defaults to localhost
+
+  If no dest is given, resolves the host as described above
+  and the port from .nrepl-port in the project root."
+  [& [cmd & opts :as args]]
+  (let [argv (apply vector args)]
+    (repl/load-dynamic-dependencies argv)
+    (core/with-pre-wrap
+      (repl/exec argv))))
