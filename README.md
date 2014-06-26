@@ -1,3 +1,4 @@
+[![Stories in Ready](https://badge.waffle.io/tailrecursion/boot.core.png?label=ready&title=Ready)](https://waffle.io/tailrecursion/boot.core)
 # boot.core
 
 Please see the main [Boot Repository][1] for more info.
