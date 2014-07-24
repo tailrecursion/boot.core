@@ -18,3 +18,4 @@ pom.xml.asc
 /boot
 /build.clj
 /docs
+*.iml
