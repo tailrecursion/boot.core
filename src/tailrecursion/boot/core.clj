@@ -76,8 +76,8 @@
      :out-path      "out"
      :src-paths     #{}
      :src-static    #{}
-     :repositories  #{"http://clojars.org/repo/"
-                      "http://repo1.maven.org/maven2/"}
+     :repositories  {"clojars" "http://clojars.org/repo/"
+                     "central" "http://repo1.maven.org/maven2/"}
      :test          "test"
      :target        "target"
      :resources     "resources"
@@ -145,7 +145,7 @@
   (fn [key old-value new-value env] key) :default ::default)
 
 (defmethod merge-env! ::default      [key old new env] new)
-(defmethod merge-env! :repositories  [key old new env] (into (or old #{}) new))
+(defmethod merge-env! :repositories  [key old new env] (into (or old {}) (if (set? new) (zipmap new new) new)))
 (defmethod merge-env! :src-static    [key old new env] (into (or old #{}) new))
 (defmethod merge-env! :src-paths     [key old new env] (into (or old #{}) new))
 (defmethod merge-env! :dependencies  [key old new env] (add-dependencies! old new env))
@@ -169,7 +169,7 @@
   (if k (get @boot-env k not-found) @boot-env))
 
 (defn add-sync!
-  "Specify directories to sync after build event. The `dst` argument is the 
+  "Specify directories to sync after build event. The `dst` argument is the
   destination directory. The `srcs` are an optional list of directories whose
   contents will be copied into `dst`. The `add-sync!` function is associative.
 
@@ -186,7 +186,7 @@
 
 (defn consume-src!
   "Tasks use this function to declare that they \"consume\" certain files. Files
-  in staging directories which are consumed by tasks will not be synced to the 
+  in staging directories which are consumed by tasks will not be synced to the
   `:out-path` at the end of the build cycle. The `filter` argument is a function
   which will be called with the seq of artifact `java.io.File` objects from the
   task staging directories. It should return a seq of files to be comsumed.
@@ -232,7 +232,7 @@
   (tmp/tmpfile? (tmpreg) f))
 
 (defn mktmp!
-  "Create a temp file and return its `File` object. If `mktmp!` has already 
+  "Create a temp file and return its `File` object. If `mktmp!` has already
   been called with the given `key` the tmpfile will be truncated. The optional
   `name` argument can be used to customize the temp file name (useful for
   creating temp files with a specific file extension, for example)."
