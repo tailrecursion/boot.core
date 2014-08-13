@@ -9,11 +9,12 @@
 (ns tailrecursion.boot.tmpregistry
   (:refer-clojure :exclude [get])
   (:require
-    [tailrecursion.boot.file  :as f]
-    [clojure.java.io          :as io]
-    [clojure.string           :as str]
-    [clojure.core             :as core]
-    [clojure.set              :refer [union intersection difference]])
+    [tailrecursion.boot.file     :as f]
+    [tailrecursion.boot.kahnsort :as k]
+    [clojure.java.io             :as io]
+    [clojure.string              :as str]
+    [clojure.core                :as core]
+    [clojure.set                 :refer [union intersection difference]])
   (:import
     java.io.File
     java.lang.management.ManagementFactory))
@@ -95,7 +96,15 @@
     (let [srcs (set (map io/file srcs))]
       (swap! syncs update-in [(io/file dest)] #(if % (into % srcs) srcs))))
   (-sync! [this]
-    (doseq [[dest srcs] @syncs] (apply f/sync :hash dest srcs)))
+    (let [path  #(.getPath %)
+          syncs (->> @syncs
+                  (reduce-kv #(assoc %1 (path %2) (into #{} (map path %3))) {}))
+          dests (set (keys syncs))
+          sortd (->> syncs k/topo-sort reverse (filter #(contains? dests %)))]
+      (assert (or (not (nil? sortd)) (empty? dests))
+        "syncs appear to have a cyclic dependency")
+      (doseq [dest sortd]
+        (apply f/sync :hash (io/file dest) (map io/file (core/get syncs dest))))))
   (-tmpfile? [this f]
     (when (f/parent? dir f) f)))
 
